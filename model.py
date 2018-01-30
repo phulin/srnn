@@ -34,8 +34,8 @@ def bilinear_upsample_weights(filter_size, weights):
     
     upsample_kernel = upsample_filt(filter_size)
     
-    for i in xrange(f_out):
-        for j in xrange(f_in):
+    for i in range(f_out):
+        for j in range(f_in):
             weights[i, j, :, :] = upsample_kernel
     return torch.Tensor(weights)        
 
@@ -87,11 +87,7 @@ class LasSRN(nn.Module):
     def __init__(self):
         super(LasSRN, self).__init__()
         self.FeatureExtraction1 = FeatureExtraction(level=1)
-        self.FeatureExtraction2 = FeatureExtraction(level=2)
-        self.FeatureExtraction3 = FeatureExtraction(level=3)
         self.ImageReconstruction1 = ImageReconstruction()
-        self.ImageReconstruction2 = ImageReconstruction()
-        self.ImageReconstruction3 = ImageReconstruction()
 
 
 
@@ -100,13 +96,7 @@ class LasSRN(nn.Module):
         convt_F1 = self.FeatureExtraction1(LR)
         HR_2 = self.ImageReconstruction1(LR, convt_F1)
         
-        convt_F2 = self.FeatureExtraction2(convt_F1)
-        HR_4 = self.ImageReconstruction2(HR_2, convt_F2)
-        
-        convt_F3 = self.FeatureExtraction3(convt_F2)
-        HR_8 = self.ImageReconstruction3(HR_4, convt_F3)
-        
-        return HR_2, HR_4, HR_8
+        return HR_2
 
         
 

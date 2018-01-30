@@ -6,58 +6,56 @@ Created on Sat May  6 19:42:37 2017
 @author: ldy
 """
 
+import torch
 import torch.utils.data as data
-import torchvision
 from os import listdir
 from os.path import join
-from PIL import Image
+from PIL import Image, ImageFilter
 import numpy as np
-import random
+
+from torchvision.transforms import ToTensor, Compose, RandomResizedCrop, Resize, RandomRotation, RandomHorizontalFlip, RandomVerticalFlip
 
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg", ".bmp"])
 
+class GaussianNoise(object):
+    def __init__(self, stddev):
+        self.stddev = stddev
+    
+    def __call__(self, im):
+        return im + self.stddev * torch.randn(*im.shape)
+
+Loader = Compose((
+    RandomRotation(5, resample=Image.BILINEAR),
+    RandomHorizontalFlip(),
+    RandomVerticalFlip(),
+    RandomResizedCrop(128, scale=(0.7, 1.0), ratio=(1., 1.)),
+))
+
+def Downscaler(n):
+    return Compose((
+        lambda im: im.filter(ImageFilter.GaussianBlur(n)),
+        Resize((64, 64), interpolation=Image.BICUBIC),
+        ToTensor(),
+        GaussianNoise(10.),
+    ))
 
 def load_img(filepath):
     img = Image.open(filepath).convert('YCbCr')
     y, _, _ = img.split()
-    randint = np.random.randint(0, 4)
-    if randint == 0:
-        y = y.rotate(90)
-    elif randint == 1:
-        y = y.rotate(180)
-    elif randint ==2:
-        y = y.rotate(270)
-    else:
-        pass
-    scale = random.uniform(0.5, 1)
-    y = y.resize((int(y.size[0]*scale), int(y.size[1]*scale)), Image.BICUBIC)
     return y
 
-
 class DatasetFromFolder(data.Dataset):
-    def __init__(self, image_dir, LR_transform=None, HR_2_transform=None, 
-                                 HR_4_transform=None, HR_8_transform=None):
+    def __init__(self, image_dir):
         super(DatasetFromFolder, self).__init__()
         self.image_filenames = [join(image_dir, x) for x in listdir(image_dir) if is_image_file(x)]
 
-        self.LR_transform = LR_transform
-        self.HR_2_transform = HR_2_transform
-        self.HR_4_transform = HR_4_transform
-        self.HR_8_transform = HR_8_transform
-
-
     def __getitem__(self, index):
-        input = load_img(self.image_filenames[index])
-        #print type(input)
-        HR_8 = self.HR_8_transform(input)
-        #print type(HR_8)
-        HR_4 = self.HR_4_transform(HR_8)
-        HR_2 = self.HR_2_transform(HR_8)
-        LR = self.LR_transform(HR_8)
-        to_tensor = torchvision.transforms.ToTensor()
-        HR_8 = to_tensor(HR_8)
-        return LR, HR_2, HR_4, HR_8
+        orig = Loader(load_img(np.random.choice(self.image_filenames)))
+        hr = ToTensor()(orig)
+        lr = Downscaler(np.random.choice([1, 3, 5]))(orig)
+
+        return lr, hr
 
     def __len__(self):
-        return len(self.image_filenames)
+        return 64
