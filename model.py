@@ -89,8 +89,6 @@ class LasSRN(nn.Module):
         self.FeatureExtraction1 = FeatureExtraction(level=1)
         self.ImageReconstruction1 = ImageReconstruction()
 
-
-
     def forward(self, LR):
         
         convt_F1 = self.FeatureExtraction1(LR)
