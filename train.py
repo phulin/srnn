@@ -46,7 +46,7 @@ def timeit(method):
 def save_image(name, out):
     torchvision.utils.save_image((out.data * 2) - 1, name)
 
-@timeit
+#@timeit
 def train(epoch, i):
     epoch_loss = 0
     for iteration, batch in enumerate(training_data_loader, 1):
@@ -71,7 +71,7 @@ def train(epoch, i):
 
         # print("===> Epoch[{}], Loop{}({}/{}): Loss: {:.4f}".format(epoch, i, iteration, len(training_data_loader), loss.data[0]))
     avg_loss = epoch_loss / len(training_data_loader)
-    if i % 1 == 0:
+    if i % 10 == 0:
         print("===> Epoch[{}], Loop {} ({} batches): Avg. Loss: {:.4f}".format(epoch, i, iteration, avg_loss))
     
     return avg_loss
