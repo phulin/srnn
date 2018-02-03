@@ -1,10 +1,6 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import torch.nn.init as init
-
-##https://warmspringwinds.github.io/tensorflow/tf-slim/2016/11/22/upsampling-and-image-segmentation-with-tensorflow-and-tf-slim/
-
 
 def upsample_filt(size):
     """
@@ -18,7 +14,6 @@ def upsample_filt(size):
     og = np.ogrid[:size, :size]
     return (1 - abs(og[0] - center) / factor) * \
            (1 - abs(og[1] - center) / factor)
-
 
 def bilinear_upsample_weights(filter_size, weights):
     """
@@ -38,8 +33,6 @@ def bilinear_upsample_weights(filter_size, weights):
         for j in range(f_in):
             weights[i, j, :, :] = upsample_kernel
     return torch.Tensor(weights)        
-
-
     
 class FeatureExtraction(nn.Module):
     def __init__(self, level):
@@ -96,6 +89,54 @@ class LasSRN(nn.Module):
         
         return HR_2
 
-        
+# MSLapSRN from later paper
+class RecursiveBlock(nn.Module):
+    def __init__(self, depth=5):
+        super(RecursiveBlock, self).__init__()
+        convs = [nn.Conv2d(64, 64, (3, 3), (1, 1), (1, 1)) for _ in range(depth)]
+        modules = sum([(conv, nn.LeakyReLU(negative_slope=0.2)) for conv in convs], ())
+        self.stack = nn.Sequential(*modules)
 
-    
+    def forward(self, skip, inp):
+        return skip + self.stack(inp)
+
+class MSFeatureExtraction(nn.Module):
+    def __init__(self, depth=5, recursive_blocks=8):
+        super(MSFeatureExtraction, self).__init__()
+        self.recursive_blocks = recursive_blocks
+        self.block = RecursiveBlock(depth)
+        self.upsample = nn.ConvTranspose2d(64, 64, (4, 4), (2, 2), (1, 1))
+
+    def forward(self, inp):
+        out = inp
+        for _ in range(self.recursive_blocks):
+            out = self.block(inp, out)
+        return self.upsample(out)
+
+class MSImageReconstruction(nn.Module):
+    def __init__(self):
+        super(MSImageReconstruction, self).__init__()
+        self.collapse = nn.Conv2d(64, 1, (3, 3), (1, 1), (1, 1))
+        self.upsample = nn.ConvTranspose2d(1, 1, (4, 4), (2, 2), (1, 1))
+        self.upsample.weight.data.copy_(bilinear_upsample_weights(4, self.upsample.weight))
+
+    def forward(self, features, LR):
+        return self.collapse(features) + self.upsample(LR)
+        
+class MSLapSRN(nn.Module):
+    def __init__(self, depth=5, recursive_blocks=8, levels=3):
+        super(MSLapSRN, self).__init__()
+        self.conv = nn.Conv2d(1, 64, (3, 3), (1, 1), (1, 1))
+        self.feature = MSFeatureExtraction(depth, recursive_blocks)
+        self.reconstruct = MSImageReconstruction()
+        self.levels = levels
+
+    def forward(self, LR):
+        features = self.conv(LR)
+        HRs = []
+        
+        for _ in range(self.levels):
+            features = self.feature(features)
+            HRs.append(self.reconstruct(features, LR))
+        
+        return HRs

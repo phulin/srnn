@@ -1,0 +1,11 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/model
+/.vs/Pytorch-LapSRN/v15
+/model1
+/model2
+/model3
+/train
+/__pycache__
