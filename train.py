@@ -5,6 +5,7 @@ from __future__ import print_function
 import argparse
 import json
 import numpy as np
+from PIL import Image
 from os.path import exists, isdir, join
 from os import listdir, makedirs
 import re
@@ -14,6 +15,7 @@ import torch
 import torch.optim as optim
 from torch.autograd import Variable
 import torchvision.utils
+import torchvision.transforms as transforms
 
 from data import get_training_set
 from torch.utils.data import DataLoader
@@ -43,12 +45,19 @@ def timeit(method):
         return result
     return timed
 
-def save_image(name, out):
-    torchvision.utils.save_image((out.data * 2) - 1, name)
+def save_tensor(name, out, scale=1.0, **kwargs):
+    grid = torchvision.utils.make_grid(out.data, range=(0., 1.), **kwargs)
+    ndarr = grid.mul(255).clamp(0, 255).byte().permute(1, 2, 0).cpu().numpy()
+    image = Image.fromarray(ndarr)
+    if abs(scale - 1.0) > 1e-4:
+        w, h = image.size
+        new_w, new_h = int(scale * w), int(scale * h)
+        image = image.resize((new_w, new_h), resample=Image.BICUBIC)
+    image.save(name)
 
 #@timeit
-def train(epoch, i):
-    epoch_loss = 0
+def train_loop(epoch, i):
+    total_loss = 0.
     for iteration, batch in enumerate(training_data_loader, 1):
         LR, HR_2_target = Variable(batch[0]), Variable(batch[1])
 
@@ -60,21 +69,42 @@ def train(epoch, i):
         HR_2, = model(LR)
 
         if iteration == 1 and i % 50 == 0:
-            save_image('lr.png', LR.cpu())
-            save_image('hr_target.png', HR_2_target.cpu())
-            save_image('hr_modeled.png', HR_2.cpu())
+            save_tensor('lr.png', LR.cpu())
+            save_tensor('lr_bicubic.png', LR.cpu(), scale=2.0)
+            save_tensor('hr_target.png', HR_2_target.cpu())
+            save_tensor('hr_modeled.png', HR_2.cpu())
         loss = CharbonnierLoss(HR_2, HR_2_target)
 
-        epoch_loss += loss.data[0]
+        total_loss += loss.data[0]
         loss.backward()
         optimizer.step()
 
         # print("===> Epoch[{}], Loop{}({}/{}): Loss: {:.4f}".format(epoch, i, iteration, len(training_data_loader), loss.data[0]))
-    avg_loss = epoch_loss / len(training_data_loader)
-    if i % 10 == 0:
-        print("===> Epoch[{}], Loop {} ({} batches): Avg. Loss: {:.4f}".format(epoch, i, iteration, avg_loss))
+
+    return total_loss / len(training_data_loader)
+
+def train_epoch(epoch, loop0):
+    total_loss = 0.
+    loops_loss = 0.
+    loops_count = 0
+    for i in range(loop0, 1001):
+        loop_loss = train_loop(epoch, i)
+        total_loss += loop_loss
+        loops_loss += loop_loss
+        loops_count += 1
+
+        if i % 10 == 0:
+            print("===> Epoch[{}], Loop {}: Avg. Loss: {:.4f}".format(epoch, i, loops_loss / loops_count))
+            loops_loss = 0.
+            loops_count = 0
     
-    return avg_loss
+        if i > 0 and i < 1000 and i % 50 == 0:
+            checkpoint(model, "model_latest.pth")
+            with open(join(opt.checkpoint, "model_latest.json"), 'w') as f:
+                json.dump({ 'epoch': epoch, 'loop': i }, f)
+
+    print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, total_loss / (1001 - loop0)))
+    return total_loss
 
 def checkpoint(model, name):
     if not exists(opt.checkpoint):
@@ -153,17 +183,11 @@ if __name__ == '__main__':
     for epoch in range(epoch0, opt.nEpochs + 1):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
 
-        epoch_loss = 0.
         if epoch > epoch0:
             loop0 = 1
-        for i in range(loop0, 1001):
-            epoch_loss += train(epoch, i)
-            if i > 0 and i < 1000 and i % 50 == 0:
-                checkpoint(model, "model_latest.pth")
-                with open(join(opt.checkpoint, "model_latest.json"), 'w') as f:
-                    json.dump({ 'epoch': epoch, 'loop': i }, f)
-    
-        print("=====> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, epoch_loss / (1001 - loop0)))
+
+        train_epoch(epoch, loop0)
+
         if epoch % 5 == 0:
             checkpoint(model, 'model_epoch_{}.pth'.format(epoch))
         if epoch % 100 == 0:

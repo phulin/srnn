@@ -97,7 +97,7 @@ class DatasetFromFolder(data.Dataset):
     def make_pair(self, image_idx):
         orig = Loader(self.images[image_idx])
         hr = ToTensor()(orig)
-        lr = Downscaler(np.random.choice([1, 3]))(orig)
+        lr = Downscaler(np.random.choice([0.5, 1., 1.5, 2.]))(orig)
 
         #if index == 0 and np.random.rand() < 0.01:
         #    orig.save('data_orig.png')
