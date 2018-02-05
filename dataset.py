@@ -67,6 +67,7 @@ def Downscaler(n):
     return Compose((
         lambda im: im.filter(ImageFilter.GaussianBlur(n)),
         Resize((64, 64), interpolation=Image.BICUBIC),
+        Resize((128, 128), interpolation=Image.BICUBIC),
         ToTensor(),
         GaussianNoise(0.04),
     ))

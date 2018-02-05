@@ -20,7 +20,7 @@ import torchvision.transforms as transforms
 from data import get_training_set
 from torch.utils.data import DataLoader
 #from dataloader import DataLoader
-from model import MSLapSRN
+from srcnn import CTSRCNN
 
 
 def count_parameters(model):
@@ -66,7 +66,7 @@ def train_loop(epoch, i):
             HR_2_target = HR_2_target.cuda()
 
         optimizer.zero_grad()
-        HR_2, = model(LR)
+        HR_2 = model(LR)
 
         if iteration == 1 and i % 50 == 0:
             save_tensor('lr.png', LR.cpu())
@@ -83,27 +83,28 @@ def train_loop(epoch, i):
 
     return total_loss / len(training_data_loader)
 
-def train_epoch(epoch, loop0):
-    total_loss = 0.
+N_LOOPS = 4000
+def train_epoch(epoch, loop0, total_loss=0.):
     loops_loss = 0.
     loops_count = 0
-    for i in range(loop0, 1001):
+    for i in range(loop0, N_LOOPS + 1):
         loop_loss = train_loop(epoch, i)
         total_loss += loop_loss
         loops_loss += loop_loss
         loops_count += 1
 
         if i % 10 == 0:
-            print("===> Epoch[{}], Loop {}: Avg. Loss: {:.4f}".format(epoch, i, loops_loss / loops_count))
+            print("===> Epoch[{}], Loop {}: Avg. Loss: {:.4f}, Running: {:.4f}".format(epoch, i, loops_loss / loops_count, total_loss / i))
             loops_loss = 0.
             loops_count = 0
     
-        if i > 0 and i < 1000 and i % 50 == 0:
+        if i > loop0 and i < N_LOOPS and i % 50 == 0:
             checkpoint(model, "model_latest.pth")
             with open(join(opt.checkpoint, "model_latest.json"), 'w') as f:
-                json.dump({ 'epoch': epoch, 'loop': i }, f)
+                global last_epoch_loss
+                json.dump({ 'epoch': epoch, 'loop': i, 'total_loss': total_loss, 'last_epoch_loss': last_epoch_loss }, f)
 
-    print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, total_loss / (1001 - loop0)))
+    print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, total_loss / N_LOOPS))
     return total_loss
 
 def checkpoint(model, name):
@@ -119,10 +120,10 @@ def CharbonnierLoss(predict, target):
 if __name__ == '__main__':
     # Training settings 
     parser = argparse.ArgumentParser(description='PyTorch LapSRN')
-    parser.add_argument('--batchSize', type=int, default=24, help='training batch size')
+    parser.add_argument('--batchSize', type=int, default=32, help='training batch size')
     parser.add_argument('--nEpochs', type=int, default=200, help='number of epochs to train for')
-    parser.add_argument('--lr', type=float, default=1e-5, help='Learning Rate.')
-    parser.add_argument('--weightDecay', type=float, default=1e-4, help='Weight decay.')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate.')
+    parser.add_argument('--weightDecay', type=float, default=0, help='Weight decay.')
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum.')
     parser.add_argument('--checkpoint', type=str, default='model', help='Path to checkpoint')
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
@@ -147,6 +148,9 @@ if __name__ == '__main__':
     model = None
     epoch0 = 1
     loop0 = 1
+    total_loss0 = 0.
+    global last_epoch_loss
+    last_epoch_loss = None
     lr = opt.lr
     if isdir(opt.checkpoint):
         if exists(join(opt.checkpoint, 'model_latest.pth')) \
@@ -156,8 +160,11 @@ if __name__ == '__main__':
             with open(join(opt.checkpoint, 'model_latest.json')) as f:
                 params = json.load(f)
                 epoch0 = params['epoch']
-                loop0 = params['loop']
-                lr /= 2 ** (epoch0 // 100)
+                if 'total_loss' in params and 'loop' in params:
+                    loop0 = params['loop']
+                    total_loss0 = params['total_loss']
+                if 'last_epoch_loss' in params:
+                    last_epoch_loss = params['last_epoch_loss']
         else:
             print('===> Loading model from epoch checkpoint.')
             checkpoints = listdir(opt.checkpoint)
@@ -171,24 +178,38 @@ if __name__ == '__main__':
 
     if model is None:
         print('===> Building model from scratch.')
-        model = MSLapSRN(depth=5, recursive_blocks=8, levels=1)
-        print('===> Number of params:', count_parameters(model))
+        model = CTSRCNN()
         checkpoint(model, 'model_epoch_0.pth')
-        print(model)
 
         if cuda:
             print('===> Moving model to GPU.')
             model = model.cuda()
+
+    print(model)
+    print('===> Number of params:', count_parameters(model))
 
     for epoch in range(epoch0, opt.nEpochs + 1):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
 
         if epoch > epoch0:
             loop0 = 1
+            total_loss0 = 0.
 
-        train_epoch(epoch, loop0)
+        epoch_loss = train_epoch(epoch, loop0, total_loss=total_loss0)
+        if last_epoch_loss is not None:
+            relative_change = (last_epoch_loss - epoch_loss) / last_epoch_loss
+            print('=> Relative change: {:.3f}. Current depth: {}.'.format(relative_change, model.depth()))
+            if relative_change < 0.02 and model.depth() <= 21:
+                print('**** ADDING 2 MORE LAYERS ****')
+                checkpoint(model, 'model_epoch_{}_depth_{}.pth'.format(epoch, model.depth()))
+                model.add_layers()
+                print('**** CURRENT DEPTH: {} ****'.format(model.depth()))
+                model = model.cuda()
+                last_epoch_loss = None
+            else:
+                last_epoch_loss = epoch_loss
+        else:
+            last_epoch_loss = epoch_loss
 
         if epoch % 5 == 0:
             checkpoint(model, 'model_epoch_{}.pth'.format(epoch))
-        if epoch % 100 == 0:
-            lr /= 2
