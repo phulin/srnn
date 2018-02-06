@@ -79,10 +79,13 @@ def load_img(filepath):
 
 class DatasetFromFolder(data.Dataset):
     @timeit
-    def __init__(self, image_dir):
+    def __init__(self, image_dir, decimate=None):
         super(DatasetFromFolder, self).__init__()
         self.image_filenames = [join(image_dir, x) for x in listdir(image_dir) if is_image_file(x)]
-        self.images = [load_img(fn) for fn in self.image_filenames]
+        if decimate is None:
+            self.images = [load_img(fn) for fn in self.image_filenames]
+        else:
+            self.images = [load_img(fn) for fn in self.image_filenames if np.random.rand() < decimate]
         #self.executor = ThreadPoolExecutor()
         #self.images = list(self.executor.map(load_img, self.image_filenames))
         #self.queue = deque(maxlen=256)

@@ -11,6 +11,6 @@ from os.path import join
 from dataset import DatasetFromFolder
 
 
-def get_training_set():
+def get_training_set(decimate=None):
 
-    return DatasetFromFolder(join("train", "orig"))
+    return DatasetFromFolder(join("train", "orig"), decimate=decimate)

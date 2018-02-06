@@ -23,7 +23,6 @@ from torch.utils.data import DataLoader
 from srcnn import CTSRCNN
 from ssim import SSIM, MSSSIM
 
-
 def count_parameters(model):
     total_param = 0
     for name, param in model.named_parameters():
@@ -56,66 +55,6 @@ def save_tensor(name, out, scale=1.0, **kwargs):
         image = image.resize((new_w, new_h), resample=Image.BICUBIC)
     image.save(name)
 
-#@timeit
-def train_loop(epoch, i, loss_fn=None):
-    total_loss = 0.
-    for iteration, batch in enumerate(training_data_loader, 1):
-        LR, HR_2_target = Variable(batch[0]), Variable(batch[1])
-
-        if cuda:
-            LR = LR.cuda()
-            HR_2_target = HR_2_target.cuda()
-
-        optimizer.zero_grad()
-        HR_2 = model(LR)
-
-        if iteration == 1 and i % 50 == 0:
-            save_tensor('lr.png', LR.cpu())
-            save_tensor('lr_bicubic.png', LR.cpu(), scale=2.0)
-            save_tensor('hr_target.png', HR_2_target.cpu())
-            save_tensor('hr_modeled.png', HR_2.cpu())
-
-        loss = loss_fn(HR_2, HR_2_target)
-
-        total_loss += loss.data[0]
-        loss.backward()
-        optimizer.step()
-
-        # print("===> Epoch[{}], Loop{}({}/{}): Loss: {:.4f}".format(epoch, i, iteration, len(training_data_loader), loss.data[0]))
-
-    return total_loss / len(training_data_loader)
-
-N_LOOPS = 4000
-def train_epoch(epoch, loop0, total_loss=0., loss_fn=None):
-    loops_loss = 0.
-    loops_count = 0
-    for i in range(loop0, N_LOOPS + 1):
-        loop_loss = train_loop(epoch, i, loss_fn=loss_fn)
-        total_loss += loop_loss
-        loops_loss += loop_loss
-        loops_count += 1
-
-        if i % 10 == 0:
-            print("===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running: {:.5f}".format(epoch, i, loops_loss / loops_count, total_loss / i))
-            loops_loss = 0.
-            loops_count = 0
-    
-        if i > loop0 and i < N_LOOPS and i % 50 == 0:
-            checkpoint(model, "model_latest.pth")
-            with open(join(opt.checkpoint, "model_latest.json"), 'w') as f:
-                global last_epoch_loss
-                json.dump({ 'epoch': epoch, 'loop': i, 'total_loss': total_loss, 'last_epoch_loss': last_epoch_loss }, f)
-
-    print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, total_loss / N_LOOPS))
-    return total_loss
-
-def checkpoint(model, name):
-    if not exists(opt.checkpoint):
-        makedirs(opt.checkpoint)
-    model_out_path = join(opt.checkpoint, name)
-    torch.save(model, model_out_path)
-    print("**** Checkpoint saved to {}".format(model_out_path))
-
 def CharbonnierLoss(predict, target):
     return torch.mean(torch.sqrt(torch.pow((predict-target), 2) + 1e-3)) # epsilon=1e-3
 
@@ -141,14 +80,157 @@ class SSIM_CharbonnierLoss(object):
     def __call__(self, x, y):
         return self.alpha * (1 - self.ssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
 
-if __name__ == '__main__':
-    losses = {
+class Trainer(object):
+    LOSSES = {
         'charbonnier': CharbonnierLoss,
         'mse': torch.nn.MSELoss,
         'ssim': SSIMLoss(),
         'ssim_char': SSIM_CharbonnierLoss(),
         'msssim': MSSSIMLoss(),
     }
+
+    N_LOOPS = 4000
+    DISPLAY_INTERVAL = 25
+    SAVE_INTERVAL = 100
+    RUNNING_LEN = 400
+
+    def __init__(self, model, epoch=0, loop=1, current_epoch_loss=0., last_epoch_loss=None, loss=None, checkpoint_dir=None, loader=None):
+        self.model = model
+        self.epoch = epoch
+        self.loop = loop
+        self.current_epoch_loss = current_epoch_loss
+        self.last_epoch_loss = last_epoch_loss
+        self.loss = loss
+        self.loss_fn = Trainer.LOSSES[loss]
+        self.checkpoint_dir = checkpoint_dir
+        self.loader = loader
+        self.running_array = np.zeros((Trainer.RUNNING_LEN,), dtype=np.float64)
+
+    @staticmethod
+    def restore(checkpoint_dir, **kwargs):
+        if not isdir(checkpoint_dir): return None
+
+        if exists(join(checkpoint_dir, 'model_latest.pth')) \
+                and exists(join(checkpoint_dir, 'model_latest.json')):
+            print('===> Loading model from inter-epoch file.')
+            model = torch.load(join(checkpoint_dir, 'model_latest.pth'))
+            with open(join(checkpoint_dir, 'model_latest.json')) as f:
+                params = json.load(f)
+                kwargs.update(params)
+                return Trainer(model, checkpoint_dir=checkpoint_dir, **kwargs)
+        else:
+            print('===> Loading model from epoch checkpoint.')
+            checkpoints = listdir(checkpoint_dir)
+            matches = [re.match(r'model_epoch_([1-9][0-9]*).pth', c) for c in checkpoints]
+            epochs = [int(match.group(1)) for match in matches if match is not None]
+            if epochs:
+                epoch0 = max(epochs)
+                model_path = join(checkpoint_dir, 'model_epoch_{}.pth'.format(epoch0))
+                model = torch.load(model_path)
+                print('===> Loaded model at {}.'.format(model_path))
+                return Trainer(model, epoch0, checkpoint_dir=checkpoint_dir, **kwargs)
+
+        return None
+
+    def checkpoint(self, name):
+        if not exists(self.checkpoint_dir):
+            makedirs(self.checkpoint_dir)
+        model_out_path = join(self.checkpoint_dir, name)
+        torch.save(self.model, model_out_path)
+        print("**** Checkpoint saved to {}".format(model_out_path))
+
+    def save(self):
+        self.checkpoint("model_latest.pth")
+        with open(join(self.checkpoint_dir, "model_latest.json"), 'w') as f:
+            global last_epoch_loss
+            json.dump({
+                'epoch': self.epoch,
+                'loop': self.loop,
+                'current_epoch_loss': self.current_epoch_loss,
+                'last_epoch_loss': self.last_epoch_loss
+            }, f)
+
+    #@timeit
+    def train_loop(self, optimizer):
+        loop_loss = 0.
+        for iteration, batch in enumerate(self.loader, 1):
+            LR, HR_2_target = Variable(batch[0]), Variable(batch[1])
+
+            if cuda:
+                LR = LR.cuda()
+                HR_2_target = HR_2_target.cuda()
+
+            optimizer.zero_grad()
+            HR_2 = self.model(LR)
+
+            if iteration == 1 and self.loop % 100 == 0:
+                save_tensor('lr.png', LR.cpu())
+                # save_tensor('lr_bicubic.png', LR.cpu(), scale=2.0)
+                save_tensor('hr_target.png', HR_2_target.cpu())
+                save_tensor('hr_modeled.png', HR_2.cpu())
+
+            loss = self.loss_fn(HR_2, HR_2_target)
+            loop_loss += loss.data[0]
+
+            loss.backward()
+            optimizer.step()
+
+            # print("===> Epoch[{}], Loop{}({}/{}): Loss: {:.4f}".format(epoch, i, iteration, len(training_data_loader), loss.data[0]))
+
+        return loop_loss / len(training_data_loader)
+
+    def train_epoch(self, optimizer):
+        loop0 = self.loop
+        for loop in range(loop0, Trainer.N_LOOPS + 1):
+            self.loop = loop
+
+            loop_loss = self.train_loop(optimizer)
+
+            running_idx = loop % self.running_array.shape[0]
+            self.running_array[running_idx] = loop_loss
+
+            self.current_epoch_loss += loop_loss
+
+            if loop % Trainer.DISPLAY_INTERVAL == 0:
+                running_avg = self.running_array.sum() / np.count_nonzero(self.running_array)
+                loops_loss = np.roll(self.running_array, -running_idx - 1)[-Trainer.DISPLAY_INTERVAL:]
+                loops_avg = loops_loss.sum() / np.count_nonzero(loops_loss)
+                
+                print("===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running {}: {:.4f}, Epoch: {:.5f}".format(self.epoch, loop, loops_avg, self.running_array.shape[0], running_avg, self.current_epoch_loss / loop))
+    
+            if loop > loop0 and loop < Trainer.N_LOOPS and loop % Trainer.SAVE_INTERVAL == 0:
+                self.save()
+
+        print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, self.current_epoch_loss / N_LOOPS))
+        return self.current_epoch_loss
+
+    def train(self):
+        epoch0 = self.epoch
+        for epoch in range(epoch0, opt.nEpochs + 1):
+            self.epoch = epoch
+            optimizer = optim.SGD(self.model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
+
+            epoch_loss = self.train_epoch(optimizer)
+
+            if self.last_epoch_loss is not None:
+                relative_change = (self.last_epoch_loss - epoch_loss) / self.last_epoch_loss
+                print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, model.depth()))
+                if relative_change < 0.02 and model.depth() <= 21:
+                    print('**** ADDING 2 MORE LAYERS ****')
+                    self.checkpoint('model_epoch_{}_depth_{}.pth'.format(epoch, model.depth()))
+                    self.model.add_layers()
+                    print('**** CURRENT DEPTH: {} ****'.format(model.depth()))
+                    self.model = self.model.cuda()
+                    self.last_epoch_loss = None
+                else:
+                    self.last_epoch_loss = epoch_loss
+            else:
+                self.last_epoch_loss = epoch_loss
+
+            if epoch % 5 == 0:
+                self.checkpoint('model_epoch_{}.pth'.format(epoch))
+
+if __name__ == '__main__':
 
     # Training settings 
     parser = argparse.ArgumentParser(description='PyTorch LapSRN')
@@ -157,7 +239,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate.')
     parser.add_argument('--weightDecay', type=float, default=0, help='Weight decay.')
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum.')
-    parser.add_argument('--loss', type=str, choices=losses.keys(), default='ssim', help='Loss function.')
+    parser.add_argument('--loss', type=str, choices=Trainer.LOSSES.keys(), default='ssim', help='Loss function.')
     parser.add_argument('--checkpoint', type=str, default='model', help='Path to checkpoint')
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
@@ -178,74 +260,20 @@ if __name__ == '__main__':
     training_data_loader = DataLoader(dataset=train_set, batch_size=opt.batchSize,
                                       pin_memory=True, num_workers=0)
 
-    model = None
-    epoch0 = 1
-    loop0 = 1
-    total_loss0 = 0.
-    global last_epoch_loss
-    last_epoch_loss = None
-    lr = opt.lr
-    if isdir(opt.checkpoint):
-        if exists(join(opt.checkpoint, 'model_latest.pth')) \
-                and exists(join(opt.checkpoint, 'model_latest.json')):
-            print('===> Loading model from inter-epoch file.')
-            model = torch.load(join(opt.checkpoint, 'model_latest.pth'))
-            with open(join(opt.checkpoint, 'model_latest.json')) as f:
-                params = json.load(f)
-                epoch0 = params['epoch']
-                if 'total_loss' in params and 'loop' in params:
-                    loop0 = params['loop']
-                    total_loss0 = params['total_loss']
-                if 'last_epoch_loss' in params:
-                    last_epoch_loss = params['last_epoch_loss']
-        else:
-            print('===> Loading model from epoch checkpoint.')
-            checkpoints = listdir(opt.checkpoint)
-            matches = [re.match(r'model_epoch_([1-9][0-9]*).pth', c) for c in checkpoints]
-            epochs = [int(match.group(1)) for match in matches if match is not None]
-            if epochs:
-                epoch0 = max(epochs)
-                model_path = join(opt.checkpoint, 'model_epoch_{}.pth'.format(epoch0))
-                model = torch.load(model_path)
-                print('===> Loaded model at {}.'.format(model_path))
+    trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=training_data_loader)
 
-    if model is None:
+    if trainer is None:
         print('===> Building model from scratch.')
         model = CTSRCNN()
-        checkpoint(model, 'model_epoch_0.pth')
-
+        
         if cuda:
             print('===> Moving model to GPU.')
             model = model.cuda()
 
-    print(model)
-    print('===> Number of params:', count_parameters(model))
+        trainer = Trainer(loss=opt.loss, loader=training_data_loader)
+        trainer.checkpoint(model, 'model_epoch_0.pth')
 
+    print(trainer.model)
+    print('===> Number of params:', count_parameters(trainer.model))
 
-    loss_fn = losses[opt.loss]
-
-    for epoch in range(epoch0, opt.nEpochs + 1):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
-
-        if epoch > epoch0:
-            loop0 = 1
-            total_loss0 = 0.
-
-        epoch_loss = train_epoch(epoch, loop0, total_loss=total_loss0, loss_fn=loss_fn)
-        if last_epoch_loss is not None:
-            relative_change = (last_epoch_loss - epoch_loss) / last_epoch_loss
-            print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, model.depth()))
-            if relative_change < 0.02 and model.depth() <= 21:
-                print('**** ADDING 2 MORE LAYERS ****')
-                checkpoint(model, 'model_epoch_{}_depth_{}.pth'.format(epoch, model.depth()))
-                model.add_layers()
-                print('**** CURRENT DEPTH: {} ****'.format(model.depth()))
-                model = model.cuda()
-                last_epoch_loss = None
-            else:
-                last_epoch_loss = epoch_loss
-        else:
-            last_epoch_loss = epoch_loss
-
-        if epoch % 5 == 0:
-            checkpoint(model, 'model_epoch_{}.pth'.format(epoch))
+    trainer.train()
