@@ -7,6 +7,7 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import torch
+import functools
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
@@ -22,7 +23,10 @@ def create_window(window_size, channel):
     window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
     return window
 
-def _ssim(img1, img2, window, window_size, channel, size_average = True):
+C1 = 0.01**2
+C2 = 0.03**2
+
+def ssim_components(img1, img2, window, window_size, channel, return_l = True):
     mu1 = F.conv2d(img1, window, padding = window_size//2, groups = channel)
     mu2 = F.conv2d(img2, window, padding = window_size//2, groups = channel)
 
@@ -34,23 +38,48 @@ def _ssim(img1, img2, window, window_size, channel, size_average = True):
     sigma2_sq = F.conv2d(img2*img2, window, padding = window_size//2, groups = channel) - mu2_sq
     sigma12 = F.conv2d(img1*img2, window, padding = window_size//2, groups = channel) - mu1_mu2
 
-    C1 = 0.01**2
-    C2 = 0.03**2
+    ssim_cs = (2 * sigma12 + C2) / (sigma1_sq + sigma2_sq + C2)
+    if return_l:
+        ssim_l = (2 * mu1_mu2 + C1) / (mu1_sq + mu2_sq + C1)
+        return ssim_l, ssim_cs
+    else:
+        return ssim_cs
 
-    ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
+def _ssim(img1, img2, window, window_size, channel, size_average = True):
+    ssim_l, ssim_cs = ssim_components(img1, img2, window, window_size, channel)
+    ssim_map = ssim_l * ssim_cs
 
     if size_average:
         return ssim_map.mean()
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
-class SSIM(torch.nn.Module):
+def _msssim(img1, img2, window, window_size, channel, size_average = True, scales = 5, weights = None):
+    weights = weights if weights else [0.0448, 0.2856, 0.3001, 0.2363, 0.1333][:scales]
+    ssim_cs = ssim_components(img1, img2, window, window_size, channel, return_l = False).pow(weights[0])
+    for i, w in enumerate(weights[1:], 1):
+        img1, img2 = torch.nn.functional.avg_pool2d(img1, 2), torch.nn.functional.avg_pool2d(img2, 2)
+        ssim_cs = torch.nn.functional.avg_pool2d(ssim_cs, 2)
+        if i < len(weights) - 1:
+            ssim_cs *= ssim_components(img1, img2, window, window_size, channel, return_l = False).pow(w)
+        elif i == len(weights) - 1:
+            ssim_l, ssim_cs_new = ssim_components(img1, img2, window, window_size, channel)
+            ssim_map = ssim_cs * (ssim_cs_new * ssim_l).pow(w)
+        else: assert False
+
+    if size_average:
+        return ssim_map.mean()
+    else:
+        return ssim_map.mean(1).mean(1).mean(1)
+
+class AbstractSSIM(torch.nn.Module):
     def __init__(self, window_size = 11, size_average = True):
-        super(SSIM, self).__init__()
+        super().__init__()
         self.window_size = window_size
         self.size_average = size_average
         self.channel = 1
         self.window = create_window(window_size, self.channel)
+        self.backend = None
 
     def forward(self, img1, img2):
         (_, channel, _, _) = img1.size()
@@ -67,8 +96,17 @@ class SSIM(torch.nn.Module):
             self.window = window
             self.channel = channel
 
+        return self.backend(img1, img2, window, self.window_size, channel, self.size_average)
 
-        return _ssim(img1, img2, window, self.window_size, channel, self.size_average)
+class SSIM(AbstractSSIM):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.backend = _ssim
+
+class MSSSIM(AbstractSSIM):
+    def __init__(self, scales = 5, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.backend = functools.partial(_msssim, scales = scales)
 
 def ssim(img1, img2, window_size = 11, size_average = True):
     (_, channel, _, _) = img1.size()

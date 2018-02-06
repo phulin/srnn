@@ -9,3 +9,7 @@
 /model3
 /train
 /__pycache__
+/model4
+/srcnn-char
+/srcnn-ssim
+/*.png

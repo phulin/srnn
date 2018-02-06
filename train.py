@@ -21,6 +21,7 @@ from data import get_training_set
 from torch.utils.data import DataLoader
 #from dataloader import DataLoader
 from srcnn import CTSRCNN
+from ssim import SSIM, MSSSIM
 
 
 def count_parameters(model):
@@ -56,7 +57,7 @@ def save_tensor(name, out, scale=1.0, **kwargs):
     image.save(name)
 
 #@timeit
-def train_loop(epoch, i):
+def train_loop(epoch, i, loss_fn=None):
     total_loss = 0.
     for iteration, batch in enumerate(training_data_loader, 1):
         LR, HR_2_target = Variable(batch[0]), Variable(batch[1])
@@ -73,7 +74,8 @@ def train_loop(epoch, i):
             save_tensor('lr_bicubic.png', LR.cpu(), scale=2.0)
             save_tensor('hr_target.png', HR_2_target.cpu())
             save_tensor('hr_modeled.png', HR_2.cpu())
-        loss = CharbonnierLoss(HR_2, HR_2_target)
+
+        loss = loss_fn(HR_2, HR_2_target)
 
         total_loss += loss.data[0]
         loss.backward()
@@ -84,17 +86,17 @@ def train_loop(epoch, i):
     return total_loss / len(training_data_loader)
 
 N_LOOPS = 4000
-def train_epoch(epoch, loop0, total_loss=0.):
+def train_epoch(epoch, loop0, total_loss=0., loss_fn=None):
     loops_loss = 0.
     loops_count = 0
     for i in range(loop0, N_LOOPS + 1):
-        loop_loss = train_loop(epoch, i)
+        loop_loss = train_loop(epoch, i, loss_fn=loss_fn)
         total_loss += loop_loss
         loops_loss += loop_loss
         loops_count += 1
 
         if i % 10 == 0:
-            print("===> Epoch[{}], Loop {}: Avg. Loss: {:.4f}, Running: {:.4f}".format(epoch, i, loops_loss / loops_count, total_loss / i))
+            print("===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running: {:.5f}".format(epoch, i, loops_loss / loops_count, total_loss / i))
             loops_loss = 0.
             loops_count = 0
     
@@ -117,7 +119,37 @@ def checkpoint(model, name):
 def CharbonnierLoss(predict, target):
     return torch.mean(torch.sqrt(torch.pow((predict-target), 2) + 1e-3)) # epsilon=1e-3
 
+class SSIMLoss(object):
+    def __init__(self, *args, **kwargs):
+        self.ssim = SSIM(*args, **kwargs)
+
+    def __call__(self, x, y):
+        return 1 - self.ssim(x, y)
+
+class MSSSIMLoss(object):
+    def __init__(self, *args, **kwargs):
+        self.ssim = MSSSIM(*args, **kwargs)
+
+    def __call__(self, x, y):
+        return 1 - self.ssim(x, y)
+
+class SSIM_CharbonnierLoss(object):
+    def __init__(self, alpha=0.84, *args, **kwargs):
+        self.ssim = SSIM(*args, **kwargs)
+        self.alpha = alpha
+
+    def __call__(self, x, y):
+        return self.alpha * (1 - self.ssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
+
 if __name__ == '__main__':
+    losses = {
+        'charbonnier': CharbonnierLoss,
+        'mse': torch.nn.MSELoss,
+        'ssim': SSIMLoss(),
+        'ssim_char': SSIM_CharbonnierLoss(),
+        'msssim': MSSSIMLoss(),
+    }
+
     # Training settings 
     parser = argparse.ArgumentParser(description='PyTorch LapSRN')
     parser.add_argument('--batchSize', type=int, default=32, help='training batch size')
@@ -125,6 +157,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate.')
     parser.add_argument('--weightDecay', type=float, default=0, help='Weight decay.')
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum.')
+    parser.add_argument('--loss', type=str, choices=losses.keys(), default='ssim', help='Loss function.')
     parser.add_argument('--checkpoint', type=str, default='model', help='Path to checkpoint')
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
@@ -188,6 +221,9 @@ if __name__ == '__main__':
     print(model)
     print('===> Number of params:', count_parameters(model))
 
+
+    loss_fn = losses[opt.loss]
+
     for epoch in range(epoch0, opt.nEpochs + 1):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
 
@@ -195,10 +231,10 @@ if __name__ == '__main__':
             loop0 = 1
             total_loss0 = 0.
 
-        epoch_loss = train_epoch(epoch, loop0, total_loss=total_loss0)
+        epoch_loss = train_epoch(epoch, loop0, total_loss=total_loss0, loss_fn=loss_fn)
         if last_epoch_loss is not None:
             relative_change = (last_epoch_loss - epoch_loss) / last_epoch_loss
-            print('=> Relative change: {:.3f}. Current depth: {}.'.format(relative_change, model.depth()))
+            print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, model.depth()))
             if relative_change < 0.02 and model.depth() <= 21:
                 print('**** ADDING 2 MORE LAYERS ****')
                 checkpoint(model, 'model_epoch_{}_depth_{}.pth'.format(epoch, model.depth()))

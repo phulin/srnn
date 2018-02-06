@@ -9,15 +9,15 @@ Created on Sat May  6 19:42:37 2017
 from concurrent.futures import ThreadPoolExecutor
 import time
 
-import torch
-import torch.utils.data as data
-import torchvision
 from os import listdir
 from os.path import join
 from collections import deque
 from PIL import Image, ImageFilter
 import numpy as np
 
+import torch
+import torch.utils.data as data
+import torchvision
 from torchvision.transforms import ToTensor, Compose, RandomCrop, RandomResizedCrop, Resize, RandomRotation, RandomHorizontalFlip, CenterCrop
 
 def save_image(name, out):
@@ -66,8 +66,8 @@ Loader = Compose((
 def Downscaler(n):
     return Compose((
         lambda im: im.filter(ImageFilter.GaussianBlur(n)),
-        Resize((64, 64), interpolation=Image.BICUBIC),
-        Resize((128, 128), interpolation=Image.BICUBIC),
+        Resize((64, 64), interpolation=Image.BILINEAR),
+        Resize((128, 128), interpolation=Image.BILINEAR),
         ToTensor(),
         GaussianNoise(0.04),
     ))
