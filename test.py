@@ -28,6 +28,9 @@ opt = parser.parse_args()
 
 print(opt)
 
+def CharbonnierLoss(predict, target):
+    return torch.mean(torch.sqrt(torch.pow((predict-target), 2) + 1e-3)) # epsilon=1e-3
+
 def process(out):
     data = out.data
     print(data.size())
@@ -63,8 +66,9 @@ if opt.reference:
     y = y.resize((y.size[0] // 2, y.size[1] // 2), Image.BILINEAR)
     y = transform(y)
     y.save('ref.png')
-    HR_ref = Variable(ToTensor()(y),unsqueeze(0), volatile=True)
-    print('SSIM:', SSIM()(HR_ref, HR_2).data[0])
-    print('MS-SSIM:', MSSSIM()(HR_ref, HR_2).data[0])
+    HR_ref = Variable(ToTensor()(y).unsqueeze(0), volatile=True)
+    print('SSIM:', 1 - SSIM()(HR_ref, HR_2).data[0])
+    print('MS-SSIM:', 1 - MSSSIM()(HR_ref, HR_2).data[0])
+    print('Charbonnier:', CharbonnierLoss(HR_ref, HR_2).data[0])
 HR_2_out = process(HR_2.cpu())
 HR_2_out.save(opt.output)
