@@ -12,7 +12,7 @@ import time
 from os import listdir
 from os.path import join
 from collections import deque
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 import numpy as np
 
 import torch
@@ -54,6 +54,10 @@ class Random90Rotation(object):
             im = im.transpose(Image.ROTATE_270)
         return im
 
+class AutoCrop(object):
+    def __call__(self, im):
+        return im.crop(ImageOps.invert(im).getbbox())
+
 Loader = Compose((
     RandomCrop(300),
     RandomRotation(10, resample=Image.BILINEAR),
@@ -75,7 +79,7 @@ def Downscaler(n):
 def load_img(filepath):
     img = Image.open(filepath).convert('YCbCr')
     y, _, _ = img.split()
-    return y
+    return AutoCrop()(y)
 
 class DatasetFromFolder(data.Dataset):
     @timeit
