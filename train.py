@@ -27,12 +27,7 @@ def count_parameters(model):
     total_param = 0
     for name, param in model.named_parameters():
         if param.requires_grad:
-            num_param = np.prod(param.size())
-            if param.dim() > 1:
-                print(name, ':', 'x'.join(str(x) for x in list(param.size())), '=', num_param)
-            else:
-                print(name, ':', num_param)
-            total_param += num_param
+            total_param += np.prod(param.size())
     return total_param
 
 def timeit(method):
@@ -80,6 +75,14 @@ class SSIM_CharbonnierLoss(object):
     def __call__(self, x, y):
         return self.alpha * (1 - self.ssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
 
+class MSSSIM_CharbonnierLoss(object):
+    def __init__(self, alpha=0.84, *args, **kwargs):
+        self.msssim = MSSSIM(*args, **kwargs)
+        self.alpha = alpha
+
+    def __call__(self, x, y):
+        return self.alpha * (1 - self.msssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
+
 class Trainer(object):
     LOSSES = {
         'charbonnier': CharbonnierLoss,
@@ -87,6 +90,7 @@ class Trainer(object):
         'ssim': SSIMLoss(),
         'ssim_char': SSIM_CharbonnierLoss(),
         'msssim': MSSSIMLoss(),
+        'msssim_char': MSSSIM_CharbonnierLoss(),
     }
 
     N_LOOPS = 4000
@@ -94,12 +98,17 @@ class Trainer(object):
     SAVE_INTERVAL = 100
     RUNNING_LEN = 400
 
-    def __init__(self, model, epoch=0, loop=1, current_epoch_loss=0., last_epoch_loss=None, loss=None, checkpoint_dir=None, loader=None):
+    MAX_DEPTH = 21
+    MAX_TRIM = 20
+    TOLERANCE = 0.015
+    TRIM_TOLERANCE = 0.01
+
+    def __init__(self, model, epoch=0, loop=0, current_epoch_loss=0., last_epoch_loss=None, loss=None, checkpoint_dir=None, loader=None):
         self.model = model
         self.epoch = epoch
         self.loop = loop
-        self.current_epoch_loss = current_epoch_loss
-        self.last_epoch_loss = last_epoch_loss
+        self.current_epoch_loss = loop * current_epoch_loss
+        self.last_epoch_loss = Trainer.N_LOOPS * last_epoch_loss if last_epoch_loss is not None else None
         self.loss = loss
         self.loss_fn = Trainer.LOSSES[loss]
         self.checkpoint_dir = checkpoint_dir
@@ -146,8 +155,8 @@ class Trainer(object):
             json.dump({
                 'epoch': self.epoch,
                 'loop': self.loop,
-                'current_epoch_loss': self.current_epoch_loss,
-                'last_epoch_loss': self.last_epoch_loss
+                'current_epoch_loss': self.current_epoch_loss / self.loop,
+                'last_epoch_loss': self.last_epoch_loss / Trainer.N_LOOPS if self.last_epoch_loss is not None else None
             }, f)
 
     #@timeit
@@ -180,8 +189,8 @@ class Trainer(object):
         return loop_loss / len(training_data_loader)
 
     def train_epoch(self, optimizer):
-        loop0 = self.loop
-        for loop in range(loop0, Trainer.N_LOOPS + 1):
+        loop0 = self.loop if self.loop < Trainer.N_LOOPS else 0
+        for loop in range(loop0 + 1, Trainer.N_LOOPS + 1):
             self.loop = loop
 
             loop_loss = self.train_loop(optimizer)
@@ -196,12 +205,20 @@ class Trainer(object):
                 loops_loss = np.roll(self.running_array, -running_idx - 1)[-Trainer.DISPLAY_INTERVAL:]
                 loops_avg = loops_loss.sum() / np.count_nonzero(loops_loss)
                 
-                print("===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running {}: {:.4f}, Epoch: {:.5f}".format(self.epoch, loop, loops_avg, self.running_array.shape[0], running_avg, self.current_epoch_loss / loop))
+                status = "===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running {}: {:.4f}, Epoch: {:.5f}".format(
+                    self.epoch, loop, loops_avg,
+                    self.running_array.shape[0], running_avg,
+                    self.current_epoch_loss / loop,
+                )
+                if self.last_epoch_loss is not None:
+                    tolerance = Trainer.TOLERANCE if self.model.depth() < Trainer.MAX_DEPTH else Trainer.TRIM_TOLERANCE
+                    status += ", Target: {:.5f}".format((1 - tolerance) * self.last_epoch_loss / Trainer.N_LOOPS)
+                print(status)
     
             if loop > loop0 and loop < Trainer.N_LOOPS and loop % Trainer.SAVE_INTERVAL == 0:
                 self.save()
 
-        print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(epoch, self.current_epoch_loss / N_LOOPS))
+        print("=> Epoch[{}]: Avg. Loss: {:.4f}".format(self.epoch, self.current_epoch_loss / Trainer.N_LOOPS))
         return self.current_epoch_loss
 
     def train(self):
@@ -214,18 +231,31 @@ class Trainer(object):
 
             if self.last_epoch_loss is not None:
                 relative_change = (self.last_epoch_loss - epoch_loss) / self.last_epoch_loss
-                print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, model.depth()))
-                if relative_change < 0.02 and model.depth() <= 21:
+                depth = self.model.depth()
+                print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, depth))
+                if depth < Trainer.MAX_DEPTH and relative_change < Trainer.TOLERANCE:
                     print('**** ADDING 2 MORE LAYERS ****')
-                    self.checkpoint('model_epoch_{}_depth_{}.pth'.format(epoch, model.depth()))
+                    self.checkpoint('model_epoch_{}_depth_{}.pth'.format(epoch, depth))
                     self.model.add_layers()
-                    print('**** CURRENT DEPTH: {} ****'.format(model.depth()))
-                    self.model = self.model.cuda()
+                    print('**** CURRENT DEPTH: {} ****'.format(self.model.depth()))
+                    print('===> Number of params:', count_parameters(trainer.model))
                     self.last_epoch_loss = None
+                elif depth >= Trainer.MAX_DEPTH and relative_change < Trainer.TRIM_TOLERANCE:
+                    if self.model.trim_count() < Trainer.MAX_TRIM:
+                        print('**** TRIMMING 2 LAYERS ****')
+                        self.checkpoint('model_epoch_{}_trim_{}.pth'.format(epoch, self.model.trim_count()))
+                        self.model.trim()
+                        print('**** CURRENT TRIM: {} ****'.format(self.model.trim_count()))
+                        print('===> Number of params:', count_parameters(trainer.model))
+                        self.last_epoch_loss = None
+                    else:
+                        self.checkpoint('model_epoch_{}_final.pth'.format(epoch))
+                        break
                 else:
                     self.last_epoch_loss = epoch_loss
             else:
                 self.last_epoch_loss = epoch_loss
+            self.current_epoch_loss = 0.
 
             if epoch % 5 == 0:
                 self.checkpoint('model_epoch_{}.pth'.format(epoch))
@@ -235,7 +265,7 @@ if __name__ == '__main__':
     # Training settings 
     parser = argparse.ArgumentParser(description='PyTorch LapSRN')
     parser.add_argument('--batchSize', type=int, default=32, help='training batch size')
-    parser.add_argument('--nEpochs', type=int, default=200, help='number of epochs to train for')
+    parser.add_argument('--nEpochs', type=int, default=250, help='number of epochs to train for')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning Rate.')
     parser.add_argument('--weightDecay', type=float, default=0, help='Weight decay.')
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum.')

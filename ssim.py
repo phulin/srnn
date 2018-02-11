@@ -54,18 +54,15 @@ def _ssim(img1, img2, window, window_size, channel, size_average = True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
-def _msssim(img1, img2, window, window_size, channel, size_average = True, scales = 5, weights = None):
-    weights = weights if weights else [0.0448, 0.2856, 0.3001, 0.2363, 0.1333][:scales]
-    ssim_cs = ssim_components(img1, img2, window, window_size, channel, return_l = False).pow(weights[0])
-    for i, w in enumerate(weights[1:], 1):
+def _msssim(img1, img2, window, window_size, channel, size_average = True, scales = 4):
+    ssim_cs = ssim_components(img1, img2, window, window_size, channel, return_l = False)
+    for i in range(1, scales - 1):
         img1, img2 = torch.nn.functional.avg_pool2d(img1, 2), torch.nn.functional.avg_pool2d(img2, 2)
         ssim_cs = torch.nn.functional.avg_pool2d(ssim_cs, 2)
-        if i < len(weights) - 1:
-            ssim_cs *= ssim_components(img1, img2, window, window_size, channel, return_l = False).pow(w)
-        elif i == len(weights) - 1:
-            ssim_l, ssim_cs_new = ssim_components(img1, img2, window, window_size, channel)
-            ssim_map = ssim_cs * (ssim_cs_new * ssim_l).pow(w)
-        else: assert False
+        ssim_cs *= ssim_components(img1, img2, window, window_size, channel, return_l = False)
+
+    ssim_l, ssim_cs_new = ssim_components(img1, img2, window, window_size, channel)
+    ssim_map = ssim_cs * (ssim_cs_new * ssim_l)
 
     if size_average:
         return ssim_map.mean()
