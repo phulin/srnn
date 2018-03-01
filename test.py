@@ -15,6 +15,7 @@ from PIL import Image
 from torchvision.transforms import ToTensor, Compose, CenterCrop
 import numpy as np
 from ssim import SSIM, MSSSIM
+from train import timeit
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch LapSRN')
@@ -46,29 +47,75 @@ def process(out):
 
     return out_img_y
 
+def average(images):
+    w, h = images[0].size
+    result = np.zeros((h, w), dtype=np.uint32)
+    for im in images:
+        result += np.asarray(im, dtype=np.uint8)
+    result //= len(images)
+    return Image.fromarray(result.clip(0, 255).astype(np.uint8))
+
 model = torch.load(opt.model, map_location=lambda storage, loc: storage)
 if opt.cuda:
     model = model.cuda()
     
-transform = Compose((CenterCrop(512),))
+transform = Compose((CenterCrop(2048),))
+
+def run(y):
+    LR = Variable(ToTensor()(y).unsqueeze(0).pin_memory(), volatile=True)
+    if opt.cuda:
+        LR = LR.cuda()
+    HR_2 = timeit(model.__call__)(LR).cpu()
+    if opt.reference:
+        img = Image.open(opt.reference).convert('YCbCr')
+        y, _, _ = img.split()
+        # y = y.resize((y.size[0] // 2, y.size[1] // 2), Image.BILINEAR)
+        y = transform(y)
+        y.save('ref.png')
+        HR_ref = Variable(ToTensor()(y).unsqueeze(0), volatile=True)
+        print('SSIM:', 1 - SSIM()(HR_ref, HR_2).data[0])
+        print('MS-SSIM:', 1 - MSSSIM()(HR_ref, HR_2).data[0])
+        print('Charbonnier:', CharbonnierLoss(HR_ref, HR_2).data[0])
+    return process(HR_2.cpu())
+
+def Rotate(angle):
+    return lambda im: im.rotate(angle)
+
+def Transpose(spec):
+    return lambda im: im.transpose(spec)
+
+TRANSFORMS = [
+    Rotate(0),
+    Rotate(90),
+    Rotate(180),
+    Rotate(270),
+    Transpose(Image.FLIP_LEFT_RIGHT),
+    Transpose(Image.FLIP_TOP_BOTTOM),
+    Transpose(Image.TRANSPOSE),
+    Transpose(Image.TRANSVERSE),
+]
+
+INVERSES = [
+    Rotate(0),
+    Rotate(270),
+    Rotate(180),
+    Rotate(90),
+    Transpose(Image.FLIP_LEFT_RIGHT),
+    Transpose(Image.FLIP_TOP_BOTTOM),
+    Transpose(Image.TRANSPOSE),
+    Transpose(Image.TRANSVERSE),
+]
+
+# TRANSFORMS = ROTATIONS + [lambda im: Flip()(Rotate(90)(im)), Compose((Flip(), Rotate(180))), Compose((Flip(), Rotate(270)))]
+# INVERSES = ROTATIONS_R + [lambda im: Rotate(270)(Flip()(im))]
+
+# TRANSFORMS = [Compose((Rotate(90), Flip()))]
 
 img = Image.open(opt.input).convert('YCbCr')
 y, _, _ = img.split()
-y = transform(y)
+# y = transform(y)
 y.save('in.png')
-LR = Variable(ToTensor()(y).unsqueeze(0), volatile=True)
-if opt.cuda:
-    LR = LR.cuda()
-HR_2 = model(LR).cpu()
-if opt.reference:
-    img = Image.open(opt.reference).convert('YCbCr')
-    y, _, _ = img.split()
-    y = y.resize((y.size[0] // 2, y.size[1] // 2), Image.BILINEAR)
-    y = transform(y)
-    y.save('ref.png')
-    HR_ref = Variable(ToTensor()(y).unsqueeze(0), volatile=True)
-    print('SSIM:', 1 - SSIM()(HR_ref, HR_2).data[0])
-    print('MS-SSIM:', 1 - MSSSIM()(HR_ref, HR_2).data[0])
-    print('Charbonnier:', CharbonnierLoss(HR_ref, HR_2).data[0])
-HR_2_out = process(HR_2.cpu())
-HR_2_out.save(opt.output)
+ys = [f(y) for f in TRANSFORMS]
+ys_out = [run(x) for x in ys]
+xs = [f(x) for f, x in zip(INVERSES, ys_out)]
+average(xs).save(opt.output)
