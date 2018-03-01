@@ -12,6 +12,8 @@ from os import listdir, makedirs
 import re
 import time
 
+import multiprocessing as mp
+
 import torch
 import torch.optim as optim
 from torch.autograd import Variable
@@ -333,7 +335,8 @@ if __name__ == '__main__':
     train_set = DatasetFromFolder(opt.train, reupscale=True)
     # train_set = get_training_set(reupscale=True, decimate=.05)
     # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
-    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=True)
+    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=True,
+                        num_workers=4)
 
     trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=loader)
 
