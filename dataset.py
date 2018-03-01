@@ -166,7 +166,7 @@ class DatasetFromFolder(data.Dataset):
         return result.result()
 
     def __len__(self):
-        return 64
+        return 512
 
 def dim3(tensor):
     return tensor.view(-1, tensor.size()[-2], tensor.size()[-1])

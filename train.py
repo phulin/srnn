@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function
-from dataset import Batcher
+# from dataset import Batcher
 
 import argparse
 import json
@@ -16,9 +16,7 @@ import torch
 import torch.optim as optim
 from torch.autograd import Variable
 import torchvision.utils
-import torchvision.transforms as transforms
 
-from data import get_training_set
 from torch.utils.data import DataLoader
 #from dataloader import DataLoader
 from srcnn import CTSRCNN
@@ -247,7 +245,7 @@ class Trainer(object):
                 print(status)
 
                 self.last_display = time.time()
-    
+
             if loop > loop0 and loop < Trainer.N_LOOPS and loop % Trainer.SAVE_INTERVAL == 0:
                 self.save()
 
@@ -256,7 +254,7 @@ class Trainer(object):
 
     def train(self):
         epoch0 = self.epoch
-        
+
         for epoch in range(epoch0, opt.nEpochs + 1):
             self.epoch = epoch
             self.scheduler.step()
