@@ -318,20 +318,21 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', type=str, default='model', help='Path to checkpoint')
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
+    parser.add_argument('--train', type=str, default='/train/hi', help='training examples')
     opt = parser.parse_args()
-    
+
     print(opt)
-    
+
     cuda = opt.cuda
     if cuda and not torch.cuda.is_available():
         raise Exception("No GPU found, please run without --cuda")
-    
+
     torch.manual_seed(opt.seed)
     if cuda:
         torch.cuda.manual_seed(opt.seed)
 
     print('===> Loading datasets')
-    train_set = get_training_set(reupscale=True)
+    train_set = DatasetFromFolder(opt.train, reupscale=True)
     # train_set = get_training_set(reupscale=True, decimate=.05)
     # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
     loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=True)
@@ -343,7 +344,7 @@ if __name__ == '__main__':
         model_class = MODELS[opt.type]
         train_set.reupscale = model_class != EDSR
         model = model_class()
-        
+
         if cuda:
             print('===> Moving model to GPU.')
             model = model.cuda()
