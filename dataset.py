@@ -12,11 +12,9 @@ import threading
 
 from os import listdir
 from os.path import join
-from collections import deque
 from queue import Queue
 from PIL import Image, ImageFilter, ImageOps, ImageChops, ImageDraw
 import numpy as np
-import itertools
 
 import torch
 import torch.utils.data as data
