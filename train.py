@@ -336,7 +336,7 @@ if __name__ == '__main__':
     # train_set = get_training_set(reupscale=True, decimate=.05)
     # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
     loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=True,
-                        num_workers=4)
+                        num_workers=mp.cpu_count())
 
     trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=loader)
 
