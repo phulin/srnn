@@ -115,7 +115,7 @@ class MSSSIMLoss(Loss):
         return 1 - self.ssim(x, y)
 
 def broadcast_color(tensor):
-    return torch.concat((tensor, tensor, tensor), dim=1)
+    return torch.cat((tensor, tensor, tensor), dim=1)
 
 class VGG19Loss(object):
     def __init__(self, i, j):
