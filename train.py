@@ -64,6 +64,9 @@ class Loss(object):
     def __mul__(self, other):
         return MulLoss(self, other)
 
+    def cuda(self):
+        return self
+
 class ConstLoss(Loss):
     def __init__(self, a):
         self.a = a
@@ -124,7 +127,6 @@ class VGG19Loss(object):
         i_current, j_current = 1, 0
         self.k = None
         for k, layer in enumerate(vgg.features):
-            print('{}: {} {}'.format(k, i_current, j_current))
             if isinstance(layer, nn.Conv2d):
                 j_current += 1
             elif isinstance(layer, nn.MaxPool2d):
@@ -137,6 +139,10 @@ class VGG19Loss(object):
         assert self.k is not None
 
         self.model = nn.Sequential(*[l for l in vgg.features][:k + 1])
+
+    def cuda(self):
+        self.model = self.model.cuda()
+        return self
 
     def __call__(self, x, y):
         if x.size()[1] == 1: x = broadcast_color(x)
@@ -159,8 +165,8 @@ class Trainer(object):
         EDSR: { 'add_layers': True },
     }
 
-    N_LOOPS = 4000
-    DISPLAY_INTERVAL = 25
+    N_LOOPS = 2000
+    DISPLAY_INTERVAL = 10
     SAVE_INTERVAL = 100
     RUNNING_LEN = 400
 
@@ -178,6 +184,8 @@ class Trainer(object):
         self.last_epoch_loss = Trainer.N_LOOPS * last_epoch_loss if last_epoch_loss is not None else None
         self.loss = loss
         self.loss_fn = Trainer.LOSSES[loss]
+        if cuda:
+            self.loss_fn = self.loss_fn.cuda()
         self.checkpoint_dir = checkpoint_dir
         self.loader = loader
         self.running_array = np.zeros((Trainer.RUNNING_LEN,), dtype=np.float64)
@@ -394,7 +402,7 @@ if __name__ == '__main__':
     train_set = DatasetFromFolder(opt.train, reupscale=True,
                                   decimate=0.05 if opt.decimate else None)
     # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
-    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=opt.cuda,
+    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=cuda,
                         num_workers=mp.cpu_count())
 
     trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=loader)
