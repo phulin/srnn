@@ -20,6 +20,8 @@ from torch.autograd import Variable
 import torchvision.utils
 
 from torch.utils.data import DataLoader
+
+from dataset import DatasetFromFolder
 #from dataloader import DataLoader
 from srcnn import CTSRCNN
 from edsr import EDSR
@@ -350,7 +352,7 @@ if __name__ == '__main__':
             print('===> Moving model to GPU.')
             model = model.cuda()
 
-        trainer = Trainer(model, loss=opt.loss, loader=training_data_loader, checkpoint_dir=opt.checkpoint)
+        trainer = Trainer(model, loss=opt.loss, loader=loader, checkpoint_dir=opt.checkpoint)
         trainer.checkpoint('model_epoch_0.pth')
 
     print(trainer.model)
