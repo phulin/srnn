@@ -47,7 +47,7 @@ class GaussianNoise(object):
         data = np.asarray(im, dtype=np.int16)
         data += np.random.normal(scale=255 * self.stddev, size=data.shape).astype(np.int16)
         return Image.fromarray(data.clip(0, 255).astype(np.uint8))
-    
+
 class Random90Rotation(object):
     def __call__(self, im):
         choice = np.random.randint(4)
@@ -121,7 +121,8 @@ def make_pair(image, reupscale):
 
 def fill_queue(queue, images, reupscale):
     while True:
-        queue.put(make_pair(images[np.random.choice(len(images))], reupscale), block=True)
+        queue.put(make_pair(images[np.random.choice(len(images))], reupscale),
+                  block=True)
 
 class DatasetFromFolder(data.Dataset):
     @timeit
@@ -196,7 +197,7 @@ class Batcher(object):
             t.start()
 
     def get(self):
-        batch = self.queue.get(timeout=1.0)
+        batch = self.queue.get(timeout=5.0)
         chunked = chunks(batch, self.mini_batch)
         for chunk in chunked:
             yield chunk
