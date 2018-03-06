@@ -127,7 +127,7 @@ def fill_queue(queue, images, reupscale):
 
 class DatasetFromFolder(data.Dataset):
     @timeit
-    def __init__(self, image_dir, size=128, reupscale=False, decimate=None):
+    def __init__(self, image_dir, size=256, reupscale=False, decimate=None):
         super(DatasetFromFolder, self).__init__()
 
         self.reupscale = reupscale

@@ -165,8 +165,8 @@ class Trainer(object):
         EDSR: { 'add_layers': True },
     }
 
-    N_LOOPS = 2000
-    DISPLAY_INTERVAL = 10
+    N_LOOPS = 1000
+    DISPLAY_INTERVAL = 5
     SAVE_INTERVAL = 100
     RUNNING_LEN = 400
 
