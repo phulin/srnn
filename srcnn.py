@@ -1,21 +1,28 @@
 import torch
 import torch.nn as nn
-import numpy as np
+# import numpy as np
 
-CONV_NORMAL_STD = 0.001
-def Conv2dNormal(*args, **kwargs):
+INIT_PRELU_SLOPE = 0.1
+
+def Conv2dInit(*args, rectified=True, **kwargs):
     result = nn.Conv2d(*args, **kwargs)
-    result.weight.data.normal_(mean=0, std=CONV_NORMAL_STD)
+    if rectified:
+        nn.init.kaiming_normal(result.weight.data, a=INIT_PRELU_SLOPE)
+    else:
+        nn.init.xavier_normal(result.weight.data)
+    result.bias.data.zero_()
     return result
 
 class CTSRCNN(nn.Module):
     def __init__(self):
         nn.Module.__init__(self)
-        self.lrelu = nn.LeakyReLU(negative_slope=0.2)
+        # self.lrelu = nn.LeakyReLU(negative_slope=0.2)
         self.stack = nn.Sequential(
-            Conv2dNormal(1, 64, (9, 9), padding=4), nn.PReLU(num_parameters=64, init=0.1),
-            Conv2dNormal(64, 32, (5, 5), padding=2), nn.PReLU(num_parameters=32, init=0.1),
-            Conv2dNormal(32, 1, (5, 5), padding=2),
+            Conv2dInit(1, 64, (9, 9), padding=4, rectified=False),
+            nn.PReLU(num_parameters=64, init=INIT_PRELU_SLOPE),
+            Conv2dInit(64, 32, (5, 5), padding=2),
+            nn.PReLU(num_parameters=32, init=INIT_PRELU_SLOPE),
+            Conv2dInit(32, 1, (5, 5), padding=2),
         )
 
     def forward(self, inp):
@@ -27,8 +34,8 @@ class CTSRCNN(nn.Module):
     def add_layers(self):
         modules = self.modules()
         modules = modules[:-1] + [
-            Conv2dNormal(32, 32, (3, 3), padding=1), nn.PReLU(num_parameters=32, init=0.1),   
-            Conv2dNormal(32, 32, (3, 3), padding=1), nn.PReLU(num_parameters=32, init=0.1),
+            Conv2dInit(32, 32, (3, 3), padding=1), nn.PReLU(num_parameters=32, init=INIT_PRELU_SLOPE),
+            Conv2dInit(32, 32, (3, 3), padding=1), nn.PReLU(num_parameters=32, init=INIT_PRELU_SLOPE),
         ] + modules[-1:]
         self.stack = nn.Sequential(*modules)
         if modules[-1].weight.data.is_cuda:
