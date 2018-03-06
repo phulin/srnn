@@ -127,22 +127,27 @@ def fill_queue(queue, images, reupscale):
 
 class DatasetFromFolder(data.Dataset):
     @timeit
-    def __init__(self, image_dir, reupscale=False, decimate=None):
+    def __init__(self, image_dir, size=128, reupscale=False, decimate=None):
         super(DatasetFromFolder, self).__init__()
+
         self.reupscale = reupscale
-        self.image_filenames = [join(image_dir, x) for x in listdir(image_dir) if is_image_file(x)]
+        self.size = size
+
+        self.image_filenames = [join(image_dir, x) for x in listdir(image_dir)
+                                if is_image_file(x)]
         if decimate is not None:
-            self.image_filenames = [fn for fn in self.image_filenames if np.random.rand() < decimate]
+            self.image_filenames = [fn for fn in self.image_filenames
+                                    if np.random.rand() < decimate]
 
         with Executor() as e:
             self.images = list(e.map(load_img, self.image_filenames))
 
-        self.queue = Queue(maxsize=512)
+        self.queue = Queue(maxsize=size * 4)
         args = (self.queue, self.images, self.reupscale)
         self.threads = [threading.Thread(target=fill_queue, args=args)
                         for _ in range(mp.cpu_count())]
         for t in self.threads:
-            t.start()
+            pass  # t.start()
 
         # self.executor = Executor()
         # self.queue = Queue(maxsize=128)
@@ -163,16 +168,19 @@ class DatasetFromFolder(data.Dataset):
         return self.queue.get(timeout=None if block else 10.0, block=block)
 
     def __getitem__(self, index):
-        return self.queue.get(timeout=10.0)
+        # print('trying get...', self.queue.qsize())
+        # out = self.queue.get(timeout=10.0)
+        # print('removed...', self.queue.qsize())
+        # return out
         return self.make_pair(self.random_image())
-        result = self.queue.get()
-        self.requeue()
-        if not result.done():
-            print('delay!!')
-        return result.result()
+        # result = self.queue.get()
+        # self.requeue()
+        # if not result.done():
+        #     print('delay!!')
+        # return result.result()
 
     def __len__(self):
-        return 512
+        return self.size
 
 def dim3(tensor):
     return tensor.view(-1, tensor.size()[-2], tensor.size()[-1])
