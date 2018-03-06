@@ -377,6 +377,7 @@ if __name__ == '__main__':
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
     parser.add_argument('--train', type=str, default='/train/hi', help='training examples')
+    parser.add_argument('--decimate', action='store_true', help='fast startup')
     opt = parser.parse_args()
 
     print(opt)
@@ -390,10 +391,10 @@ if __name__ == '__main__':
         torch.cuda.manual_seed(opt.seed)
 
     print('===> Loading datasets')
-    train_set = DatasetFromFolder(opt.train, reupscale=True)
-    # train_set = get_training_set(reupscale=True, decimate=.05)
+    train_set = DatasetFromFolder(opt.train, reupscale=True,
+                                  decimate=0.05 if opt.decimate else None)
     # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
-    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=True,
+    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=opt.cuda,
                         num_workers=mp.cpu_count())
 
     trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=loader)
