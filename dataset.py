@@ -7,6 +7,7 @@ Created on Sat May  6 19:42:37 2017
 """
 
 from concurrent.futures import ThreadPoolExecutor as Executor
+import multiprocessing as mp
 import time
 import threading
 
@@ -136,8 +137,10 @@ class DatasetFromFolder(data.Dataset):
         with Executor() as e:
             self.images = list(e.map(load_img, self.image_filenames))
 
-        self.queue = Queue(maxsize=256)
-        self.threads = [threading.Thread(target=fill_queue, args=(self.queue, self.images, reupscale)) for _ in range(4)]
+        self.queue = Queue(maxsize=512)
+        args = (self.queue, self.images, self.reupscale)
+        self.threads = [threading.Thread(target=fill_queue, args=args)
+                        for _ in range(mp.cpu_count())]
         for t in self.threads:
             t.start()
 
@@ -157,10 +160,10 @@ class DatasetFromFolder(data.Dataset):
         return make_pair(self.images[image_idx], self.reupscale)
 
     def get(self, block=False):
-        return self.queue.get(timeout=None if block else 1.0, block=block)
+        return self.queue.get(timeout=None if block else 10.0, block=block)
 
     def __getitem__(self, index):
-        return self.queue.get(timeout=1.0)
+        return self.queue.get(timeout=10.0)
         return self.make_pair(self.random_image())
         result = self.queue.get()
         self.requeue()
@@ -197,7 +200,7 @@ class Batcher(object):
             t.start()
 
     def get(self):
-        batch = self.queue.get(timeout=5.0)
+        batch = self.queue.get(timeout=15.0)
         chunked = chunks(batch, self.mini_batch)
         for chunk in chunked:
             yield chunk
