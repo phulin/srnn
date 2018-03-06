@@ -206,25 +206,30 @@ class Trainer(object):
                 setattr(self, key, val)
 
     @staticmethod
-    def restore(checkpoint_dir, **kwargs):
+    def restore(input_dir, checkpoint_dir=None, **kwargs):
+        if checkpoint_dir is None:
+            checkpoint_dir = input_dir
+        elif input_dir is None:
+            input_dir = checkpoint_dir
+
         if not isdir(checkpoint_dir): return None
 
-        if exists(join(checkpoint_dir, 'model_latest.pth')) \
-                and exists(join(checkpoint_dir, 'model_latest.json')):
+        if exists(join(input_dir, 'model_latest.pth')) \
+                and exists(join(input_dir, 'model_latest.json')):
             print('===> Loading model from inter-epoch file.')
-            model = torch.load(join(checkpoint_dir, 'model_latest.pth'))
-            with open(join(checkpoint_dir, 'model_latest.json')) as f:
+            model = torch.load(join(input_dir, 'model_latest.pth'))
+            with open(join(input_dir, 'model_latest.json')) as f:
                 params = json.load(f)
                 kwargs.update(params)
                 return Trainer(model, checkpoint_dir=checkpoint_dir, **kwargs)
         else:
             print('===> Loading model from epoch checkpoint.')
-            checkpoints = listdir(checkpoint_dir)
+            checkpoints = listdir(input_dir)
             matches = [re.match(r'model_epoch_([1-9][0-9]*).pth', c) for c in checkpoints]
             epochs = [int(match.group(1)) for match in matches if match is not None]
             if epochs:
                 epoch0 = max(epochs)
-                model_path = join(checkpoint_dir, 'model_epoch_{}.pth'.format(epoch0))
+                model_path = join(input_dir, 'model_epoch_{}.pth'.format(epoch0))
                 model = torch.load(model_path)
                 print('===> Loaded model at {}.'.format(model_path))
                 return Trainer(model, epoch0, checkpoint_dir=checkpoint_dir, **kwargs)
@@ -381,6 +386,7 @@ if __name__ == '__main__':
     parser.add_argument('--momentum', type=float, default=0.9, help='Momentum.')
     parser.add_argument('--loss', type=str, choices=Trainer.LOSSES.keys(), default='ssim', help='Loss function.')
     parser.add_argument('--type', type=str, choices=MODELS.keys(), default='edsr', help='Model type to build.')
+    parser.add_argument('--start', type=str, default=None, help='Path to starting point')
     parser.add_argument('--checkpoint', type=str, default='model', help='Path to checkpoint')
     parser.add_argument('--cuda', action='store_true', help='use cuda?')
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
@@ -405,7 +411,7 @@ if __name__ == '__main__':
     loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=cuda,
                         num_workers=mp.cpu_count())
 
-    trainer = Trainer.restore(opt.checkpoint, loss=opt.loss, loader=loader)
+    trainer = Trainer.restore(opt.start, checkpoint_dir=opt.checkpoint, loss=opt.loss, loader=loader)
 
     if trainer is None:
         print('===> Building model from scratch.')
