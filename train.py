@@ -139,8 +139,8 @@ class VGG19Loss(object):
         self.model = nn.Sequential(*[l for l in vgg.features][:k + 1])
 
     def __call__(self, x, y):
-        if x.size[1] == 1: x = broadcast_color(x)
-        if y.size[1] == 1: y = broadcast_color(y)
+        if x.size()[1] == 1: x = broadcast_color(x)
+        if y.size()[1] == 1: y = broadcast_color(y)
         return torch.mean(torch.pow(self.model(x) - self.model(y), 2))
 
 class Trainer(object):
