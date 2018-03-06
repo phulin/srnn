@@ -15,9 +15,11 @@ import time
 import multiprocessing as mp
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 import torchvision.utils
+from torchvision.models import vgg19
 
 from torch.utils.data import DataLoader
 
@@ -55,47 +57,101 @@ def save_tensor(name, out, scale=1.0, **kwargs):
         image = image.resize((new_w, new_h), resample=Image.BICUBIC)
     image.save(name)
 
-def CharbonnierLoss(predict, target):
-    return torch.mean(torch.sqrt(torch.pow((predict-target), 2) + 1e-3)) # epsilon=1e-3
+class Loss(object):
+    def __add__(self, other):
+        return AddLoss(self, other)
 
-class SSIMLoss(object):
+    def __mul__(self, other):
+        return MulLoss(self, other)
+
+class ConstLoss(Loss):
+    def __init__(self, a):
+        self.a = a
+
+    def __call__(self, x, y):
+        return self.a
+
+def make_loss(a):
+    if hasattr(a, '__call__'):
+        return a
+    else:
+        return ConstLoss(a)
+
+class AddLoss(Loss):
+    def __init__(self, a, b):
+        self.a = make_loss(a)
+        self.b = make_loss(b)
+
+    def __call__(self, x, y):
+        return self.a(x, y) + self.b(x, y)
+
+class MulLoss(Loss):
+    def __init__(self, a, b):
+        self.a = make_loss(a)
+        self.b = make_loss(b)
+
+    def __call__(self, x, y):
+        return self.a(x, y) + self.b(x, y)
+
+class CharbonnierLoss(Loss):
+    def __init__(self, eps=1e-3):
+        self.eps = eps
+
+    def __call__(x, y):
+        return torch.mean(torch.sqrt(torch.pow(x - y, 2) + self.eps))
+
+class SSIMLoss(Loss):
     def __init__(self, *args, **kwargs):
         self.ssim = SSIM(*args, **kwargs)
 
     def __call__(self, x, y):
         return 1 - self.ssim(x, y)
 
-class MSSSIMLoss(object):
+class MSSSIMLoss(Loss):
     def __init__(self, *args, **kwargs):
         self.ssim = MSSSIM(*args, **kwargs)
 
     def __call__(self, x, y):
         return 1 - self.ssim(x, y)
 
-class SSIM_CharbonnierLoss(object):
-    def __init__(self, alpha=0.84, *args, **kwargs):
-        self.ssim = SSIM(*args, **kwargs)
-        self.alpha = alpha
+def broadcast_color(tensor):
+    return torch.concat((tensor, tensor, tensor), dim=1)
+
+class VGG19Loss(object):
+    def __init__(self, i, j):
+        vgg = vgg19(pretrained=True)
+
+        i_current, j_current = 1, 0
+        self.k = None
+        for k, layer in enumerate(vgg.features):
+            print('{}: {} {}'.format(k, i_current, j_current))
+            if isinstance(layer, nn.Conv2d):
+                j_current += 1
+            elif isinstance(layer, nn.MaxPool2d):
+                i_current += 1
+                j_current = 0
+            elif isinstance(layer, nn.ReLU) and (i, j) == (i_current, j_current):
+                self.k = k
+                break
+
+        assert self.k is not None
+
+        self.model = nn.Sequential(*[l for l in vgg.features][:k + 1])
 
     def __call__(self, x, y):
-        return self.alpha * (1 - self.ssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
-
-class MSSSIM_CharbonnierLoss(object):
-    def __init__(self, alpha=0.84, *args, **kwargs):
-        self.msssim = MSSSIM(*args, **kwargs)
-        self.alpha = alpha
-
-    def __call__(self, x, y):
-        return self.alpha * (1 - self.msssim(x, y)) + (1 - self.alpha) * CharbonnierLoss(x, y)
+        if x.size[1] == 1: x = broadcast_color(x)
+        if y.size[1] == 1: y = broadcast_color(y)
+        return torch.mean(torch.pow(self.model(x) - self.model(y), 2))
 
 class Trainer(object):
     LOSSES = {
         'charbonnier': CharbonnierLoss,
         'mse': torch.nn.MSELoss,
         'ssim': SSIMLoss(),
-        'ssim_char': SSIM_CharbonnierLoss(),
+        'ssim_char': SSIMLoss() * 0.84 + CharbonnierLoss() * 0.16,
         'msssim': MSSSIMLoss(),
-        'msssim_char': MSSSIM_CharbonnierLoss(alpha=0.6),
+        'msssim_char': MSSSIMLoss() * 0.6 + CharbonnierLoss() * 0.4,
+        'vgg19': VGG19Loss(5, 4),
     }
 
     TYPE_KWARGS = {
