@@ -35,12 +35,14 @@ def timeit(method):
     return timed
 
 def is_image_file(filename):
-    return any(filename.endswith(extension) for extension in [".png", ".jpg", ".jpeg", ".bmp"])
+    extensions = [".png", ".jpg", ".jpeg", ".bmp"]
+    return not filename.startswith('.') and \
+        any((filename.endswith(extension) for extension in extensions))
 
 class GaussianNoise(object):
     def __init__(self, stddev):
         self.stddev = stddev
-    
+
     def __call__(self, im):
         data = np.asarray(im, dtype=np.int16)
         data += np.random.normal(scale=255 * self.stddev, size=data.shape).astype(np.int16)
@@ -155,7 +157,7 @@ class DatasetFromFolder(data.Dataset):
 
     def get(self, block=False):
         return self.queue.get(timeout=None if block else 1.0, block=block)
-  
+
     def __getitem__(self, index):
         return self.queue.get(timeout=1.0)
         return self.make_pair(self.random_image())
