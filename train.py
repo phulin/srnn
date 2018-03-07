@@ -354,14 +354,14 @@ class Trainer(object):
                     print('**** STOPPING ****')
                     self.checkpoint('model_epoch_{}_final.pth'.format(epoch))
                     break
-                elif not adding_done and relative_change < Trainer.TOLERANCE:
+                elif not adding_done and relative_change < Trainer.TOLERANCE and relative_change >= -0.5:
                     print('**** ADDING 2 MORE LAYERS ****')
                     self.checkpoint('model_epoch_{}_depth_{}.pth'.format(epoch, depth))
                     self.model.add_layers()
                     print('**** CURRENT DEPTH: {} ****'.format(self.model.depth()))
                     print('===> Number of params:', count_parameters(trainer.model))
                     self.last_epoch_loss = None
-                elif not trimming_done and relative_change < Trainer.TRIM_TOLERANCE:
+                elif not trimming_done and relative_change < Trainer.TRIM_TOLERANCE and relative_change >= -0.5:
                     print('**** TRIMMING 2 LAYERS ****')
                     self.checkpoint('model_epoch_{}_trim_{}.pth'.format(epoch, self.model.trim_count()))
                     self.model.trim()
