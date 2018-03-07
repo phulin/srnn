@@ -88,6 +88,9 @@ class AddLoss(Loss):
     def __call__(self, x, y):
         return self.a(x, y) + self.b(x, y)
 
+    def cuda(self):
+        return AddLoss(self.a.cuda(), self.b.cuda())
+
 class MulLoss(Loss):
     def __init__(self, a, b):
         self.a = make_loss(a)
@@ -95,6 +98,9 @@ class MulLoss(Loss):
 
     def __call__(self, x, y):
         return self.a(x, y) + self.b(x, y)
+
+    def cuda(self):
+        return MulLoss(self.a.cuda(), self.b.cuda())
 
 class CharbonnierLoss(Loss):
     def __init__(self, eps=1e-3):
@@ -212,12 +218,15 @@ class Trainer(object):
         elif input_dir is None:
             input_dir = checkpoint_dir
 
-        if not isdir(checkpoint_dir): return None
+        if not isdir(input_dir):
+            print('===> No checkpoint found in {}'.format(input_dir))
+            return None
 
         if exists(join(input_dir, 'model_latest.pth')) \
                 and exists(join(input_dir, 'model_latest.json')):
             print('===> Loading model from inter-epoch file.')
             model = torch.load(join(input_dir, 'model_latest.pth'))
+            if opt.cuda: model = model.cuda()
             with open(join(input_dir, 'model_latest.json')) as f:
                 params = json.load(f)
                 kwargs.update(params)
