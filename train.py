@@ -120,7 +120,7 @@ class MSSSIMLoss(Loss):
 def broadcast_color(tensor):
     return torch.cat((tensor, tensor, tensor), dim=1)
 
-class VGG19Loss(object):
+class VGG19Loss(Loss):
     def __init__(self, i, j):
         vgg = vgg19(pretrained=True)
 
@@ -157,7 +157,7 @@ class Trainer(object):
         'ssim_char': SSIMLoss() * 0.84 + CharbonnierLoss() * 0.16,
         'msssim': MSSSIMLoss(),
         'msssim_char': MSSSIMLoss() * 0.6 + CharbonnierLoss() * 0.4,
-        'vgg19': VGG19Loss(5, 4),
+        'vgg19': VGG19Loss(5, 4) * 0.5 + VGG19Loss(2, 2) * 0.5,
     }
 
     TYPE_KWARGS = {
