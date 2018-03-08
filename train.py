@@ -176,8 +176,6 @@ class Trainer(object):
     SAVE_INTERVAL = 100
     RUNNING_LEN = 400
 
-    MAX_DEPTH = 25
-    MAX_TRIM = 20
     TOLERANCE = 0.015
     TRIM_TOLERANCE = 0.01
     FINAL_TOLERANCE = -np.inf
@@ -316,8 +314,8 @@ class Trainer(object):
                 )
 
                 if self.last_epoch_loss is not None:
-                    tolerance = Trainer.TOLERANCE if self.model.depth() < Trainer.MAX_DEPTH \
-                        else Trainer.TRIM_TOLERANCE if self.trim and self.model.trim_count() < Trainer.MAX_TRIM \
+                    tolerance = Trainer.TOLERANCE if self.model.depth() < opt.maxDepth \
+                        else Trainer.TRIM_TOLERANCE if self.trim and self.model.trim_count() < opt.maxTrim \
                         else Trainer.FINAL_TOLERANCE
                     status += ", Target: {:.5f}".format((1 - tolerance) * self.last_epoch_loss / Trainer.N_LOOPS)
 
@@ -347,8 +345,8 @@ class Trainer(object):
                 depth = self.model.depth()
                 print('=> Relative change: {:.1%}. Current depth: {}.'.format(relative_change, depth))
 
-                adding_done = not self.add_layers or depth >= Trainer.MAX_DEPTH
-                trimming_done = not self.trim or depth >= Trainer.MAX_TRIM
+                adding_done = not self.add_layers or depth >= opt.maxDepth
+                trimming_done = not self.trim or depth >= opt.maxTrim
 
                 if adding_done and trimming_done and relative_change < Trainer.FINAL_TOLERANCE:
                     print('**** STOPPING ****')
@@ -401,6 +399,8 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=123, help='random seed to use. Default=123')
     parser.add_argument('--train', type=str, default='/train/hi', help='training examples')
     parser.add_argument('--decimate', action='store_true', help='fast startup')
+    parser.add_argument('--maxDepth', type=int, default=21, help='Max depth to grow network to')
+    parser.add_argument('--maxTrim', type=int, default=16, help='Max depth to trim network to')
     opt = parser.parse_args()
 
     print(opt)
