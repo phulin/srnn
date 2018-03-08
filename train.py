@@ -97,7 +97,7 @@ class MulLoss(Loss):
         self.b = make_loss(b)
 
     def __call__(self, x, y):
-        return self.a(x, y) + self.b(x, y)
+        return self.a(x, y) * self.b(x, y)
 
     def cuda(self):
         return MulLoss(self.a.cuda(), self.b.cuda())
