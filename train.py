@@ -163,7 +163,7 @@ class Trainer(object):
         'ssim_char': SSIMLoss() * 0.84 + CharbonnierLoss() * 0.16,
         'msssim': MSSSIMLoss(),
         'msssim_char': MSSSIMLoss() * 0.6 + CharbonnierLoss() * 0.4,
-        'vgg19': VGG19Loss(5, 4) * 0.5 + VGG19Loss(2, 2) * 0.5,
+        'vgg19': VGG19Loss(5, 4) * 0.5 + VGG19Loss(2, 2) * 0.2,
     }
 
     TYPE_KWARGS = {
