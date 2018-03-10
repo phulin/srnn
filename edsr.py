@@ -2,10 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-MAPS = 64
+MAPS = 32
 RESIDUAL_SCALING = 0.1
-
-RES_BLOCKS = 32
 
 LRELU_SLOPE = 0.01
 
@@ -53,17 +51,17 @@ class Shift(nn.Module):
         return 'Shift({})'.format(self.amount)
 
 class EDSR(nn.Module):
-    def __init__(self, res_blocks=6, factor=2, maps=MAPS):
+    def __init__(self, res_blocks=5, factor=2, maps=MAPS):
         nn.Module.__init__(self)
 
         self.maps = maps
-        res_blocks = [Residual(Block(maps)) for _ in range(res_blocks)]
+        blocks = [Residual(Block(maps)) for _ in range(res_blocks)]
 
         self.head = nn.Sequential(
             Conv2dInit(1, maps, (3, 3), padding=1),
             Shift(-0.4),
         )
-        self.body = Residual(res_blocks + [Conv2dInit(maps, maps, (3, 3), padding=1)], scale=None)
+        self.body = Residual(blocks + [Conv2dInit(maps, maps, (3, 3), padding=1)], scale=None)
         self.tail = nn.Sequential(
             Conv2dInit(maps, factor ** 2 * maps, (3, 3), padding=1),
             nn.PixelShuffle(2),
