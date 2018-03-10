@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+RES_BLOCKS = 80
 MAPS = 32
 RESIDUAL_SCALING = 0.1
 
@@ -51,7 +52,7 @@ class Shift(nn.Module):
         return 'Shift({})'.format(self.amount)
 
 class EDSR(nn.Module):
-    def __init__(self, res_blocks=5, factor=2, maps=MAPS):
+    def __init__(self, res_blocks=RES_BLOCKS, factor=2, maps=MAPS):
         nn.Module.__init__(self)
 
         self.maps = maps

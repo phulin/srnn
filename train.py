@@ -339,28 +339,32 @@ class Trainer(object):
     def train(self):
         epoch0 = self.epoch
 
+        while True:
+            try:
+                # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
+                loader = DataLoader(self.dataset, batch_size=self.batch_size,
+                                    pin_memory=cuda,
+                                    num_workers=mp.cpu_count())
+                self.train_loop(loader)
+                break
+            except RuntimeError as e:
+                if 'out of memory' in str(e):
+                    self.batch_size = int(self.batch_size * 0.9)
+                    print('===> Reducing batch size to {}.'.format(self.batch_size))
+                    if self.batch_size == 0:
+                        print("can't reduce batchSize any further...")
+                        raise
+                else:
+                    raise
+
+
         self.scheduler.step(epoch0)
         for epoch in range(epoch0, opt.nEpochs + 1):
             self.epoch = epoch
 
-            while True:
-                try:
-                    # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
-                    loader = DataLoader(self.dataset, batch_size=self.batch_size,
-                                        pin_memory=cuda,
-                                        num_workers=mp.cpu_count())
-
-                    epoch_loss = self.train_epoch(loader)
-                    self.scheduler.step()
-                    break
-                except RuntimeError as e:
-                    if 'out of memory' in str(e):
-                        self.batch_size = int(self.batch_size * 0.9)
-                        if self.batch_size == 0:
-                            print("can't reduce batchSize any further...")
-                            raise
-                    else:
-                        raise
+            self.current_epoch_loss = 0.
+            self.scheduler.step()
+            epoch_loss = self.train_epoch(loader)
 
             if self.last_epoch_loss is not None:
                 relative_change = (self.last_epoch_loss - epoch_loss) / self.last_epoch_loss
@@ -392,7 +396,6 @@ class Trainer(object):
                     self.last_epoch_loss = epoch_loss
             else:
                 self.last_epoch_loss = epoch_loss
-            self.current_epoch_loss = 0.
 
             if epoch % 5 == 0:
                 self.checkpoint('model_epoch_{}.pth'.format(epoch))
