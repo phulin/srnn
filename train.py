@@ -355,8 +355,8 @@ class Trainer(object):
                     break
                 except RuntimeError as e:
                     if 'out of memory' in str(e):
-                        self.batchSize = int(self.batchSize * 0.9)
-                        if self.batchSize == 0:
+                        self.batch_size = int(self.batch_size * 0.9)
+                        if self.batch_size == 0:
                             print("can't reduce batchSize any further...")
                             raise
                     else:
