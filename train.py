@@ -167,7 +167,7 @@ class Trainer(object):
     }
 
     TYPE_KWARGS = {
-        CTSRCNN: { 'trim': True, 'add_layers': True },
+        CTSRCNN: { 'trim': True, 'add_layers': True, 'reupscale': True },
         EDSR: { 'add_layers': True },
     }
 
@@ -180,7 +180,7 @@ class Trainer(object):
     TRIM_TOLERANCE = 0.01
     FINAL_TOLERANCE = -np.inf
 
-    def __init__(self, model, epoch=0, loop=0, current_epoch_loss=0., last_epoch_loss=None, loss=None, checkpoint_dir=None, loader=None, optimizer='sgd'):
+    def __init__(self, model, epoch=0, loop=0, current_epoch_loss=0., last_epoch_loss=None, loss=None, checkpoint_dir=None, optimizer='sgd'):
         self.model = model
         self.epoch = epoch
         self.loop = loop
@@ -191,7 +191,6 @@ class Trainer(object):
         if cuda:
             self.loss_fn = self.loss_fn.cuda()
         self.checkpoint_dir = checkpoint_dir
-        self.loader = loader
         self.running_array = np.zeros((Trainer.RUNNING_LEN,), dtype=np.float64)
         self.last_display = None
 
@@ -199,15 +198,20 @@ class Trainer(object):
             self.optimizer = optim.SGD(self.model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weightDecay)
         elif optimizer == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=opt.lr, betas=(0.9, 0.999), weight_decay=opt.weightDecay)
-        
+
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, opt.lr_period, gamma=0.5)
-        self.scheduler.step(epoch)
 
         self.add_layers = False
         self.trim = False
+        self.reupscale = False
         if type(model) in Trainer.TYPE_KWARGS:
             for key, val in Trainer.TYPE_KWARGS[type(model)].items():
                 setattr(self, key, val)
+
+        print('===> Loading datasets')
+        self.dataset = DatasetFromFolder(opt.train, reupscale=self.reupscale,
+                                    decimate=0.05 if opt.decimate else None)
+        self.batch_size = opt.batchSize
 
     @staticmethod
     def restore(input_dir, checkpoint_dir=None, **kwargs):
@@ -262,9 +266,9 @@ class Trainer(object):
             }, f)
 
     #@timeit
-    def train_loop(self):
+    def train_loop(self, loader):
         loop_loss = 0.
-        for iteration, batch in enumerate(self.loader, 1):
+        for iteration, batch in enumerate(loader, 1):
             LR, HR_2_target = Variable(batch[0]), Variable(batch[1])
 
             if cuda:
@@ -290,12 +294,12 @@ class Trainer(object):
 
         return loop_loss / iteration
 
-    def train_epoch(self):
+    def train_epoch(self, loader):
         loop0 = self.loop if self.loop < Trainer.N_LOOPS else 0
         for loop in range(loop0 + 1, Trainer.N_LOOPS + 1):
             self.loop = loop
 
-            loop_loss = self.train_loop()
+            loop_loss = self.train_loop(loader)
 
             running_idx = loop % self.running_array.shape[0]
             self.running_array[running_idx] = loop_loss
@@ -306,7 +310,7 @@ class Trainer(object):
                 running_avg = self.running_array.sum() / np.count_nonzero(self.running_array)
                 loops_loss = np.roll(self.running_array, -running_idx - 1)[-Trainer.DISPLAY_INTERVAL:]
                 loops_avg = loops_loss.sum() / np.count_nonzero(loops_loss)
-                
+
                 status = "===> Epoch[{}], Loop {:4d}: Avg. Loss: {:.4f}, Running {}: {:.4f}, Epoch: {:.5f}".format(
                     self.epoch, loop, loops_avg,
                     self.running_array.shape[0], running_avg,
@@ -335,10 +339,28 @@ class Trainer(object):
     def train(self):
         epoch0 = self.epoch
 
+        self.scheduler.step(epoch0)
         for epoch in range(epoch0, opt.nEpochs + 1):
             self.epoch = epoch
-            self.scheduler.step()
-            epoch_loss = self.train_epoch()
+
+            while True:
+                try:
+                    # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
+                    loader = DataLoader(self.dataset, batch_size=self.batch_size,
+                                        pin_memory=cuda,
+                                        num_workers=mp.cpu_count())
+
+                    epoch_loss = self.train_epoch(loader)
+                    self.scheduler.step()
+                    break
+                except RuntimeError as e:
+                    if 'out of memory' in str(e):
+                        self.batchSize = int(self.batchSize * 0.9)
+                        if self.batchSize == 0:
+                            print("can't reduce batchSize any further...")
+                            raise
+                    else:
+                        raise
 
             if self.last_epoch_loss is not None:
                 relative_change = (self.last_epoch_loss - epoch_loss) / self.last_epoch_loss
@@ -370,7 +392,7 @@ class Trainer(object):
                     self.last_epoch_loss = epoch_loss
             else:
                 self.last_epoch_loss = epoch_loss
-            self.current_epoch_loss = 0.    
+            self.current_epoch_loss = 0.
 
             if epoch % 5 == 0:
                 self.checkpoint('model_epoch_{}.pth'.format(epoch))
@@ -413,26 +435,18 @@ if __name__ == '__main__':
     if cuda:
         torch.cuda.manual_seed(opt.seed)
 
-    print('===> Loading datasets')
-    train_set = DatasetFromFolder(opt.train, reupscale=True,
-                                  decimate=0.05 if opt.decimate else None)
-    # loader = Batcher(train_set, big_batch=64, mini_batch=opt.batchSize)
-    loader = DataLoader(train_set, batch_size=opt.batchSize, pin_memory=cuda,
-                        num_workers=mp.cpu_count())
-
-    trainer = Trainer.restore(opt.start, checkpoint_dir=opt.checkpoint, loss=opt.loss, loader=loader)
+    trainer = Trainer.restore(opt.start, checkpoint_dir=opt.checkpoint, loss=opt.loss)
 
     if trainer is None:
         print('===> Building model from scratch.')
         model_class = MODELS[opt.type]
-        train_set.reupscale = model_class != EDSR
         model = model_class()
 
         if cuda:
             print('===> Moving model to GPU.')
             model = model.cuda()
 
-        trainer = Trainer(model, loss=opt.loss, loader=loader, checkpoint_dir=opt.checkpoint)
+        trainer = Trainer(model, checkpoint_dir=opt.checkpoint, loss=opt.loss)
         trainer.checkpoint('model_epoch_0.pth')
 
     print(trainer.model)
